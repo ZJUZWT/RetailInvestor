@@ -5,13 +5,15 @@ export function GameOver() {
   const { gameStatus, peakAssets, cash, shares, currentPrice, goal, totalTradingDays } = useGameStore();
   const { newGame } = useGameStore(s => s.actions);
 
-  if (gameStatus !== 'won' && gameStatus !== 'lost') return null;
-
   const totalAssets = cash + shares * currentPrice;
   const isWin = gameStatus === 'won';
+
+  // Hooks must be called before any conditional return (Rules of Hooks)
   const animatedAssets = useCountUp(totalAssets, 1500, 2);
   const animatedPeak = useCountUp(peakAssets, 1500, 2);
   const animatedCompletion = useCountUp(totalAssets / goal.targetAmount * 100, 1200, 1);
+
+  if (gameStatus !== 'won' && gameStatus !== 'lost') return null;
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 animate-backdropFadeIn">

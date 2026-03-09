@@ -6,16 +6,17 @@ export function Settlement() {
   const historyDays = useGameStore(s => s.historyDays);
   const { advancePhase } = useGameStore(s => s.actions);
 
-  if (phase !== 'settlement') return null;
-
   const totalAssets = cash + shares * currentPrice;
   const progress = (totalAssets / goal.targetAmount * 100).toFixed(1);
 
+  // Hooks must be called before any conditional return (Rules of Hooks)
   const animatedCash = useCountUp(cash, 1500, 2);
   const animatedMarketValue = useCountUp(shares * currentPrice, 1500, 2);
   const animatedAssets = useCountUp(totalAssets, 1500, 2);
   const animatedPeak = useCountUp(peakAssets, 1200, 2);
   const animatedProgress = useCountUp(parseFloat(progress), 1200, 1);
+
+  if (phase !== 'settlement') return null;
 
   return (
     <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4 animate-fadeIn">
