@@ -212,3 +212,29 @@ body {
   background: #333;
   border-radius: 2px;
 }
+
+/* === 消息瀑布动画 === */
+@keyframes newsSlideIn {
+  0% { opacity: 0; transform: translateY(-20px) scale(0.95); }
+  60% { opacity: 1; transform: translateY(4px) scale(1.02); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-newsSlideIn {
+  animation: newsSlideIn 0.4s ease-out;
+}
+
+@keyframes newsFadeOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-12px); }
+}
+.animate-newsFadeOut {
+  animation: newsFadeOut 0.5s ease-in forwards;
+}
+
+@keyframes urgentFlash {
+  0%, 100% { box-shadow: 0 0 4px rgba(251, 191, 36, 0.3); }
+  50% { box-shadow: 0 0 16px rgba(251, 191, 36, 0.7), 0 0 32px rgba(251, 191, 36, 0.3); }
+}
+.animate-urgentFlash {
+  animation: urgentFlash 1s ease-in-out infinite;
+}

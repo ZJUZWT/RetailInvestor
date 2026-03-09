@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { GameState, GamePhase, Card, OpeningPattern, MAVisible } from '../types';
+import type { NewsMessage, ScheduledNews } from '../types/newsTypes';
 import type { IntradayTick } from '../engine/IntradaySimulator';
 import { getRandomGoal } from '../data/goals';
 import {
@@ -29,6 +30,11 @@ import {
   executeActivity,
 } from '../engine/EventSystem';
 import { addCard, replaceCard, sumCardEffects } from '../engine/CardSystem';
+import {
+  scheduleSessionNews,
+  checkScheduledNews,
+  generateSessionBurst,
+} from '../engine/IntradayNewsEngine';
 
 const SAVE_KEY = 'retail_investor_save';
 
@@ -61,6 +67,11 @@ export interface StoreState extends GameState {
   chartView: 'intraday' | 'daily' | 'weekly' | 'monthly' | '5day'; // K线视图
   recentIntradayHistory: IntradayTick[][]; // 最近5天分时数据
   maVisible: MAVisible;                    // 均线显示开关
+
+  // 消息瀑布系统
+  waterfallQueue: NewsMessage[];       // 待瀑布动画的消息
+  intradayNewsSchedule: ScheduledNews[];  // 当前session预排新闻
+  newsIdCounter: number;               // 自增ID
 }
 
 interface GameActions {
@@ -76,6 +87,7 @@ interface GameActions {
   dismissPendingCard: () => void;
   addMessage: (msg: string) => void;
   getTotalAssets: () => number;
+  dismissWaterfallMessage: (id: number) => void;
 
   // 盘中控制
   setPlaybackSpeed: (speed: PlaybackSpeed) => void;
@@ -84,6 +96,15 @@ interface GameActions {
   stopPlayback: () => void;
   setChartView: (view: StoreState['chartView']) => void;
   toggleMA: (key: keyof MAVisible) => void;
+}
+
+// 辅助函数：将纯文本包装为系统消息
+let _globalNewsId = 1;
+function sysMsg(text: string, source: NewsMessage['source'] = 'system', priority: NewsMessage['priority'] = 'normal'): NewsMessage {
+  return { id: _globalNewsId++, text, source, priority, timestamp: Date.now() };
+}
+function sysMsgs(texts: string[], source?: NewsMessage['source']): NewsMessage[] {
+  return texts.map(t => sysMsg(t, source));
 }
 
 function createInitialState(): Omit<StoreState, 'actions'> {
@@ -128,6 +149,9 @@ function createInitialState(): Omit<StoreState, 'actions'> {
     maVisible: { ma5: true, ma10: true, ma20: true },
     historyDays: 0,
     openingPattern: 'sideways_consolidation' as OpeningPattern,
+    waterfallQueue: [],
+    intradayNewsSchedule: [],
+    newsIdCounter: 1,
   };
 }
 
@@ -167,11 +191,13 @@ export const useGameStore = create<StoreState>((set, get) => ({
         openingPattern: pattern,
         recentIntradayHistory: [],
         maVisible: { ma5: true, ma10: true, ma20: true },
-        messages: [
+        messages: sysMsgs([
           `欢迎来到股市！你的目标：${goal.title}（¥${goal.targetAmount.toLocaleString()}）`,
           `你选择了【${stockName}】，当前价格 ¥${lastClose}`,
           '祝你好运，散户！',
-        ],
+        ]),
+        waterfallQueue: [],
+        intradayNewsSchedule: [],
       });
     },
 
@@ -180,6 +206,13 @@ export const useGameStore = create<StoreState>((set, get) => ({
         const saved = localStorage.getItem(SAVE_KEY);
         if (!saved) return false;
         const state = JSON.parse(saved);
+        // 兼容旧存档：string[] → NewsMessage[]
+        if (state.messages && state.messages.length > 0 && typeof state.messages[0] === 'string') {
+          state.messages = (state.messages as string[]).map((t: string) => sysMsg(t));
+        }
+        if (!state.waterfallQueue) state.waterfallQueue = [];
+        if (!state.intradayNewsSchedule) state.intradayNewsSchedule = [];
+        if (!state.newsIdCounter) state.newsIdCounter = _globalNewsId;
         set({ ...state, pendingCard: null, lunchHint: null, tickTimerId: null, playbackSpeed: 1 as PlaybackSpeed });
         return true;
       } catch {
@@ -189,7 +222,7 @@ export const useGameStore = create<StoreState>((set, get) => ({
 
     saveGame: () => {
       const state = get();
-      const { actions, pendingCard, lunchHint, tickTimerId, ...saveable } = state;
+      const { actions, pendingCard, lunchHint, tickTimerId, waterfallQueue, ...saveable } = state;
       localStorage.setItem(SAVE_KEY, JSON.stringify(saveable));
     },
 
@@ -264,9 +297,10 @@ export const useGameStore = create<StoreState>((set, get) => ({
           chartView: 'intraday',
           lunchHint: { direction: hintDirection, reliable: isReliable },
           messages: [
-            `🍜 午间休息 | 上午收盘: ¥${amClosePrice.toFixed(2)}`,
-            `💬 ${lunchMsg.source}：${lunchMsg.text}${hintDirection === 'up' ? '涨 📈' : '跌 📉'}`,
+            sysMsg(`🍜 午间休息 | 上午收盘: ¥${amClosePrice.toFixed(2)}`, 'market_index'),
+            sysMsg(`💬 ${lunchMsg.source}：${lunchMsg.text}${hintDirection === 'up' ? '涨 📈' : '跌 📉'}`, 'rumor'),
           ],
+          intradayNewsSchedule: [],
         });
         return;
       }
@@ -293,9 +327,10 @@ export const useGameStore = create<StoreState>((set, get) => ({
           recentIntradayHistory: recentHistory,
           chartView: 'intraday',
           messages: [
-            `📊 收盘价: ¥${closePrice.toFixed(2)} (${Number(changePercent) >= 0 ? '+' : ''}${changePercent}%)`,
-            `⚡ 盘后活动时间 | 剩余体力: ${state.stamina}`,
+            sysMsg(`📊 收盘价: ¥${closePrice.toFixed(2)} (${Number(changePercent) >= 0 ? '+' : ''}${changePercent}%)`, 'market_index', 'important'),
+            sysMsg(`⚡ 盘后活动时间 | 剩余体力: ${state.stamina}`),
           ],
+          intradayNewsSchedule: [],
         });
         return;
       }
@@ -303,9 +338,32 @@ export const useGameStore = create<StoreState>((set, get) => ({
       // 正常推进tick
       if (nextTick < state.intradayTicks.length) {
         const tick = state.intradayTicks[nextTick];
+        const changePercent = ((tick.price - state.todayOpen) / state.todayOpen) * 100;
+
+        // 检查预排新闻
+        const newsCtx = {
+          stockName: state.stockName,
+          price: tick.price,
+          changePercent,
+          todayOpen: state.todayOpen,
+          amClose: state.amClose,
+        };
+        const { messages: newNews, updatedSchedule, nextId } = checkScheduledNews(
+          nextTick, state.intradayNewsSchedule, newsCtx, state.newsIdCounter,
+        );
+
+        // 快速播放（speed>=3）时跳过瀑布动画
+        const skipWaterfall = state.playbackSpeed >= 3;
+
         set({
           currentTick: nextTick,
           currentPrice: tick.price,
+          intradayNewsSchedule: updatedSchedule,
+          newsIdCounter: nextId,
+          ...(newNews.length > 0 ? {
+            messages: [...state.messages, ...newNews],
+            waterfallQueue: skipWaterfall ? state.waterfallQueue : [...state.waterfallQueue, ...newNews],
+          } : {}),
         });
       }
     },
@@ -382,9 +440,9 @@ export const useGameStore = create<StoreState>((set, get) => ({
           eventModifier: eventMod,
           extraStaminaNextDay: 0,
           messages: [
-            `=== 第 ${nextDay - state.historyDays} 天 ===`,
-            `📰 ${todayEvent.title}`,
-            todayEvent.description,
+            sysMsg(`=== 第 ${nextDay - state.historyDays} 天 ===`),
+            sysMsg(`📰 ${todayEvent.title}`, 'breaking', todayEvent.rarity === 'legendary' ? 'urgent' : 'important'),
+            sysMsg(todayEvent.description),
           ],
           lunchHint: null,
           intradayTicks: [],
@@ -400,6 +458,17 @@ export const useGameStore = create<StoreState>((set, get) => ({
         const trend = getTrendForDay(state.day, state.trendSegments);
         const ticks = generateIntradayTicks(prevClose, trend, state.eventModifier);
         const openPrice = ticks[0].price;
+        const changePercent = ((openPrice - prevClose) / prevClose) * 100;
+
+        // 生成开盘爆发消息 + 预排上午新闻
+        const newsCtx = { stockName: state.stockName, price: openPrice, changePercent, todayOpen: openPrice };
+        const { messages: burstMsgs, nextId } = generateSessionBurst('am_trading', newsCtx, state.newsIdCounter);
+        const amSchedule = scheduleSessionNews(5, AM_END_TICK - 5);
+
+        const openMsgs = [
+          sysMsg(`📈 开盘价: ¥${openPrice.toFixed(2)} ${openPrice >= prevClose ? '↑' : '↓'}`, 'market_index', 'important'),
+          sysMsg('盘中实时交易已开始，可随时买入/卖出'),
+        ];
 
         set({
           phase: 'am_trading',
@@ -409,10 +478,10 @@ export const useGameStore = create<StoreState>((set, get) => ({
           currentTick: 0,
           playbackSpeed: 1 as PlaybackSpeed,
           chartView: 'intraday',
-          messages: [
-            `📈 开盘价: ¥${openPrice.toFixed(2)} ${openPrice >= prevClose ? '↑' : '↓'}`,
-            '盘中实时交易已开始，可随时买入/卖出',
-          ],
+          messages: [...openMsgs, ...burstMsgs],
+          waterfallQueue: burstMsgs,
+          intradayNewsSchedule: amSchedule,
+          newsIdCounter: nextId,
         });
 
         // 启动播放
@@ -422,11 +491,24 @@ export const useGameStore = create<StoreState>((set, get) => ({
 
       if (state.phase === 'lunch_break') {
         // 进入下午交易：从PM_START_TICK继续
+        const pmPrice = state.intradayTicks[PM_START_TICK]?.price ?? state.currentPrice;
+        const changePercent = ((pmPrice - state.todayOpen) / state.todayOpen) * 100;
+
+        // 生成下午开盘爆发消息 + 预排下午新闻
+        const newsCtx = { stockName: state.stockName, price: pmPrice, changePercent, todayOpen: state.todayOpen, amClose: state.amClose };
+        const { messages: burstMsgs, nextId } = generateSessionBurst('pm_trading', newsCtx, state.newsIdCounter);
+        const pmSchedule = scheduleSessionNews(PM_START_TICK + 5, TOTAL_TICKS - 10);
+
+        const pmOpenMsg = sysMsg('📈 下午开盘，继续交易', 'market_index');
+
         set({
           phase: 'pm_trading',
           currentTick: PM_START_TICK,
           chartView: 'intraday',
-          messages: ['📈 下午开盘，继续交易'],
+          messages: [pmOpenMsg, ...burstMsgs],
+          waterfallQueue: burstMsgs,
+          intradayNewsSchedule: pmSchedule,
+          newsIdCounter: nextId,
         });
 
         setTimeout(() => get().actions.startPlayback(), 50);
@@ -454,7 +536,7 @@ export const useGameStore = create<StoreState>((set, get) => ({
         shares: totalShares,
         shareCostBasis: Math.round((totalCost / totalShares) * 100) / 100,
         boughtToday: true,
-        messages: [`✅ 买入 ${shares} 股 @ ¥${state.currentPrice.toFixed(2)}，花费 ¥${cost.toFixed(2)}`],
+        messages: [sysMsg(`✅ 买入 ${shares} 股 @ ¥${state.currentPrice.toFixed(2)}，花费 ¥${cost.toFixed(2)}`, 'trade')],
       });
     },
 
@@ -462,7 +544,7 @@ export const useGameStore = create<StoreState>((set, get) => ({
       const state = get();
       if (shares > state.shares || shares <= 0) return;
       if (state.boughtToday) {
-        set({ messages: ['❌ T+1规则：今日买入的股票明天才能卖出！'] });
+        set({ messages: [sysMsg('❌ T+1规则：今日买入的股票明天才能卖出！', 'system', 'important')] });
         return;
       }
 
@@ -477,7 +559,7 @@ export const useGameStore = create<StoreState>((set, get) => ({
         shares: remainingShares,
         shareCostBasis: remainingShares > 0 ? state.shareCostBasis : 0,
         messages: [
-          `✅ 卖出 ${shares} 股 @ ¥${state.currentPrice.toFixed(2)}，获得 ¥${total.toFixed(2)}${bonus > 0 ? ` (含加成 +¥${bonus.toFixed(2)})` : ''}`,
+          sysMsg(`✅ 卖出 ${shares} 股 @ ¥${state.currentPrice.toFixed(2)}，获得 ¥${total.toFixed(2)}${bonus > 0 ? ` (含加成 +¥${bonus.toFixed(2)})` : ''}`, 'trade'),
         ],
       });
     },
@@ -489,11 +571,11 @@ export const useGameStore = create<StoreState>((set, get) => ({
       const costs: Record<string, number> = { social_media: 1, research: 1, socializing: 2, side_hustle: 1 };
       const cost = costs[activityId] ?? 0;
       if (state.stamina < cost) {
-        set({ messages: ['❌ 体力不足！'] });
+        set({ messages: [sysMsg('❌ 体力不足！')] });
         return;
       }
       if (state.activitiesDoneToday.includes(activityId)) {
-        set({ messages: ['❌ 今天已经做过了！'] });
+        set({ messages: [sysMsg('❌ 今天已经做过了！')] });
         return;
       }
 
@@ -501,7 +583,7 @@ export const useGameStore = create<StoreState>((set, get) => ({
       const updates: Partial<StoreState> = {
         stamina: state.stamina - cost,
         activitiesDoneToday: [...state.activitiesDoneToday, activityId],
-        messages: [result.message],
+        messages: [sysMsg(result.message)],
       };
 
       if (result.cashChange) updates.cash = Math.round((state.cash + result.cashChange) * 100) / 100;
@@ -525,20 +607,20 @@ export const useGameStore = create<StoreState>((set, get) => ({
       const newPeak = Math.max(state.peakAssets, totalAssets);
 
       let gameStatus = state.gameStatus;
-      const messages: string[] = [
-        `💸 今日生活费: -¥${actualExpense}`,
-        `💰 剩余现金: ¥${newCash.toFixed(2)}`,
-        `📊 总资产: ¥${totalAssets.toFixed(2)} / 目标 ¥${state.goal.targetAmount.toLocaleString()}`,
+      const messages: NewsMessage[] = [
+        sysMsg(`💸 今日生活费: -¥${actualExpense}`),
+        sysMsg(`💰 剩余现金: ¥${newCash.toFixed(2)}`),
+        sysMsg(`📊 总资产: ¥${totalAssets.toFixed(2)} / 目标 ¥${state.goal.targetAmount.toLocaleString()}`),
       ];
 
       if (totalAssets >= state.goal.targetAmount) {
         gameStatus = 'won';
-        messages.push(`🎉 恭喜！你达成了目标【${state.goal.title}】！`);
+        messages.push(sysMsg(`🎉 恭喜！你达成了目标【${state.goal.title}】！`, 'system', 'urgent'));
       } else if (totalAssets < actualExpense) {
         gameStatus = 'lost';
-        messages.push('💀 破产了！连生活费都付不起了...');
+        messages.push(sysMsg('💀 破产了！连生活费都付不起了...', 'system', 'urgent'));
       } else if (newCash < 0) {
-        messages.push('⚠️ 警告：现金已为负！请尽快卖出股票回笼资金！');
+        messages.push(sysMsg('⚠️ 警告：现金已为负！请尽快卖出股票回笼资金！', 'system', 'important'));
       }
 
       set({
@@ -565,7 +647,11 @@ export const useGameStore = create<StoreState>((set, get) => ({
 
     dismissPendingCard: () => set({ pendingCard: null }),
 
-    addMessage: (msg: string) => set(state => ({ messages: [...state.messages, msg] })),
+    addMessage: (msg: string) => set(state => ({ messages: [...state.messages, sysMsg(msg)] })),
+
+    dismissWaterfallMessage: (id: number) => set(state => ({
+      waterfallQueue: state.waterfallQueue.filter(m => m.id !== id),
+    })),
 
     getTotalAssets: () => {
       const s = get();

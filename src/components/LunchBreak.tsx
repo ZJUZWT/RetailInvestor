@@ -1,4 +1,5 @@
 import { useGameStore } from '../stores/gameStore';
+import { NEWS_SOURCE_CONFIG } from '../types/newsTypes';
 
 export function LunchBreak() {
   const { phase, lunchHint, intradayTicks, stockName, messages } = useGameStore();
@@ -45,9 +46,17 @@ export function LunchBreak() {
       {/* 消息日志 */}
       {messages.length > 0 && (
         <div className="bg-[#12121f] rounded p-2 mb-3 max-h-24 overflow-y-auto">
-          {messages.map((msg, i) => (
-            <p key={i} className="text-xs text-gray-400 py-0.5">{msg}</p>
-          ))}
+          {messages.map((msg) => {
+            const config = NEWS_SOURCE_CONFIG[msg.source];
+            return (
+              <div key={msg.id} className="flex items-start gap-1 py-0.5">
+                <span className="text-[9px] shrink-0" style={{ color: config.color }}>
+                  {config.emoji}
+                </span>
+                <p className="text-xs text-gray-400">{msg.text}</p>
+              </div>
+            );
+          })}
         </div>
       )}
 

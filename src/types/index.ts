@@ -1,3 +1,5 @@
+import type { NewsMessage } from './newsTypes';
+
 // === 游戏阶段 ===
 export type GamePhase =
   | 'morning_news'
@@ -194,7 +196,7 @@ export interface GameState {
   currentEvent: GameEvent | null;
   eventLog: { day: number; event: GameEvent }[];
 
-  messages: string[];
+  messages: NewsMessage[];
 
   // 盘后活动追踪
   activitiesDoneToday: string[];

@@ -247,10 +247,16 @@ export function KLineChart() {
 
       seriesRef.current = series;
       // 固定分时图横轴范围为整个交易日 (0-240)，避免少量数据点占满屏幕
-      chart.timeScale().setVisibleRange({
-        from: 0 as unknown as UTCTimestamp,
-        to: 240 as unknown as UTCTimestamp,
-      });
+      if (intradayData.length > 0) {
+        try {
+          chart.timeScale().setVisibleRange({
+            from: 0 as unknown as UTCTimestamp,
+            to: 240 as unknown as UTCTimestamp,
+          });
+        } catch {
+          chart.timeScale().fitContent();
+        }
+      }
     } else {
       // K线图
       const series = chart.addSeries(CandlestickSeries, {

@@ -13,6 +13,7 @@ import { MainMenu } from './components/MainMenu';
 import { GameOver } from './components/GameOver';
 import { MessageLog } from './components/MessageLog';
 import { EventLog } from './components/EventLog';
+import { NewsWaterfall } from './components/NewsWaterfall';
 
 function GameScreen() {
   const { gameStatus } = useGameStore();
@@ -64,6 +65,7 @@ function App() {
       <MainMenu />
       <GameScreen />
       <GameOver />
+      <NewsWaterfall />
     </div>
   );
 }
