@@ -492,7 +492,7 @@ export const useGameStore = create<StoreState>((set, get) => ({
         set({ messages: ['❌ 体力不足！'] });
         return;
       }
-      if (activityId !== 'rest' && state.activitiesDoneToday.includes(activityId)) {
+      if (state.activitiesDoneToday.includes(activityId)) {
         set({ messages: ['❌ 今天已经做过了！'] });
         return;
       }
@@ -537,6 +537,8 @@ export const useGameStore = create<StoreState>((set, get) => ({
       } else if (totalAssets < actualExpense) {
         gameStatus = 'lost';
         messages.push('💀 破产了！连生活费都付不起了...');
+      } else if (newCash < 0) {
+        messages.push('⚠️ 警告：现金已为负！请尽快卖出股票回笼资金！');
       }
 
       set({

@@ -17,8 +17,13 @@ export function Settlement() {
       <div className="space-y-2 text-sm mb-4">
         <div className="flex justify-between text-gray-400">
           <span>现金余额</span>
-          <span className="text-green-400 font-mono">¥{cash.toFixed(2)}</span>
+          <span className={`font-mono ${cash < 0 ? 'text-red-500' : 'text-green-400'}`}>¥{cash.toFixed(2)}</span>
         </div>
+        {cash < 0 && (
+          <div className="bg-red-900/30 border border-red-800 rounded p-2">
+            <p className="text-red-400 text-xs font-bold">⚠️ 现金已为负！尽快卖出股票回笼资金，否则将面临破产！</p>
+          </div>
+        )}
         {shares > 0 && (
           <div className="flex justify-between text-gray-400">
             <span>持仓市值</span>

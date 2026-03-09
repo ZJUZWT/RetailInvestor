@@ -30,8 +30,9 @@ export function StatusBar() {
           ))}
         </div>
 
-        <span className="text-green-400 font-mono">
+        <span className={`font-mono ${cash < 0 ? 'text-red-500 animate-pulse' : 'text-green-400'}`}>
           💰 ¥{cash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          {cash < 0 && ' ⚠️'}
         </span>
 
         {shares > 0 && (

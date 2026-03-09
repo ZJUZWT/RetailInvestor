@@ -15,7 +15,7 @@ export function ActivityPanel() {
 
       <div className="space-y-2 mb-4">
         {ACTIVITIES.map(activity => {
-          const done = activity.id !== 'rest' && activitiesDoneToday.includes(activity.id);
+          const done = activitiesDoneToday.includes(activity.id);
           const noStamina = stamina < activity.staminaCost;
           const disabled = done || noStamina;
 
