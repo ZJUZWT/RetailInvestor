@@ -238,15 +238,34 @@ export const useGameStore = create<StoreState>((set, get) => ({
       if (state.phase === 'am_trading' && nextTick > AM_END_TICK) {
         get().actions.stopPlayback();
         const amClosePrice = state.intradayTicks[AM_END_TICK]?.price ?? state.currentPrice;
+
+        // 自动生成午间消息：根据下午走势给出提示（40%准确率，有卡牌加成）
+        const pmClosePrice = state.intradayTicks[TOTAL_TICKS - 1]?.price ?? amClosePrice;
+        const actualDirection = pmClosePrice >= amClosePrice ? 'up' : 'down';
+        const infoAccuracy = 0.4 + sumCardEffects(state.cards, 'info_accuracy');
+        const isReliable = Math.random() < infoAccuracy;
+        const hintDirection = isReliable ? actualDirection : (actualDirection === 'up' ? 'down' : 'up');
+
+        const lunchMessages = [
+          { text: '食堂里有人在聊这只股票，听说下午可能', source: '食堂八卦' },
+          { text: '你刷到一条消息，分析师说下午走势可能', source: '手机推送' },
+          { text: '同事神秘兮兮地跟你说，下午大概率会', source: '同事爆料' },
+          { text: '午休群里有人发了条消息，说下午要', source: '微信群' },
+          { text: '你打盹时梦到下午股价', source: '午间灵感' },
+        ];
+        const lunchMsg = lunchMessages[Math.floor(Math.random() * lunchMessages.length)];
+
         set({
           phase: 'lunch_break',
           currentTick: AM_END_TICK,
           currentPrice: amClosePrice,
           amClose: amClosePrice,
           stamina: state.stamina - 1,
-          chartView: 'intraday', // 午休时仍可看分时
+          chartView: 'intraday',
+          lunchHint: { direction: hintDirection, reliable: isReliable },
           messages: [
             `🍜 午间休息 | 上午收盘: ¥${amClosePrice.toFixed(2)}`,
+            `💬 ${lunchMsg.source}：${lunchMsg.text}${hintDirection === 'up' ? '涨 📈' : '跌 📉'}`,
           ],
         });
         return;

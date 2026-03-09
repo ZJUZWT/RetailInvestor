@@ -1,20 +1,8 @@
-import { useMemo } from 'react';
 import { useGameStore } from '../stores/gameStore';
 
 export function LunchBreak() {
-  const { phase, lunchHint, intradayTicks, stockName } = useGameStore();
+  const { phase, lunchHint, intradayTicks, stockName, messages } = useGameStore();
   const { advancePhase, setChartView } = useGameStore(s => s.actions);
-
-  // 固定随机提示（不随render变化）
-  const hint = useMemo(() => {
-    const hints = [
-      '你在食堂吃着盒饭刷手机...',
-      '午休时间，同事们都在讨论股票...',
-      '咖啡+手机，经典午间组合...',
-      '趴在工位上假装午睡，其实在看行情...',
-    ];
-    return hints[Math.floor(Math.random() * hints.length)];
-  }, [phase]); // 只在phase变化时重新随机
 
   if (phase !== 'lunch_break') return null;
 
@@ -26,7 +14,6 @@ export function LunchBreak() {
   return (
     <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4">
       <h3 className="text-white font-bold mb-3">🍜 午间休息 (11:30 - 13:00)</h3>
-      <p className="text-gray-400 text-sm mb-3">{hint}</p>
 
       {/* 上午盘回顾 */}
       <div className="bg-[#1a1a2e] rounded p-3 mb-3 border border-gray-700">
@@ -39,17 +26,28 @@ export function LunchBreak() {
         </p>
       </div>
 
+      {/* 午间消息 */}
       {lunchHint && (
-        <div className="bg-[#1a1a2e] rounded p-3 mb-3 border border-gray-700">
+        <div className="bg-[#1a1a2e] rounded p-3 mb-3 border border-yellow-900/50">
+          <p className="text-xs text-yellow-600 mb-1">📱 午间小道消息</p>
           <p className="text-sm text-gray-300">
-            📱 你从消息中感觉到下午行情可能会
-            <span className={lunchHint.direction === 'up' ? 'text-red-400' : 'text-green-400'}>
+            你从消息中感觉到下午行情可能会
+            <span className={lunchHint.direction === 'up' ? 'text-red-400 font-bold' : 'text-green-400 font-bold'}>
               {lunchHint.direction === 'up' ? '上涨 📈' : '下跌 📉'}
             </span>
           </p>
           <p className="text-xs text-gray-500 mt-1">
             {lunchHint.reliable ? '（这条消息看起来比较靠谱）' : '（这条消息...谁知道呢）'}
           </p>
+        </div>
+      )}
+
+      {/* 消息日志 */}
+      {messages.length > 0 && (
+        <div className="bg-[#12121f] rounded p-2 mb-3 max-h-24 overflow-y-auto">
+          {messages.map((msg, i) => (
+            <p key={i} className="text-xs text-gray-400 py-0.5">{msg}</p>
+          ))}
         </div>
       )}
 
