@@ -1,13 +1,13 @@
 import { useEffect, useRef, useMemo } from 'react';
-import { createChart, LineSeries, CandlestickSeries, type IChartApi, type ISeriesApi } from 'lightweight-charts';
+import { createChart, LineSeries, CandlestickSeries, type IChartApi, type ISeriesApi, type UTCTimestamp } from 'lightweight-charts';
 import { useGameStore, type StoreState } from '../stores/gameStore';
 
 /** 计算移动平均线 */
 function calculateMA(
-  data: { time: unknown; close: number }[],
+  data: { time: UTCTimestamp; close: number }[],
   period: number,
-): { time: unknown; value: number }[] {
-  const result: { time: unknown; value: number }[] = [];
+): { time: UTCTimestamp; value: number }[] {
+  const result: { time: UTCTimestamp; value: number }[] = [];
   for (let i = period - 1; i < data.length; i++) {
     let sum = 0;
     for (let j = i - period + 1; j <= i; j++) {
@@ -20,9 +20,9 @@ function calculateMA(
 
 /** 计算分时均价线（累计均价） */
 function calculateAvgPriceLine(
-  data: { time: unknown; value: number }[],
-): { time: unknown; value: number }[] {
-  const result: { time: unknown; value: number }[] = [];
+  data: { time: UTCTimestamp; value: number }[],
+): { time: UTCTimestamp; value: number }[] {
+  const result: { time: UTCTimestamp; value: number }[] = [];
   let sum = 0;
   for (let i = 0; i < data.length; i++) {
     sum += data[i].value;
@@ -122,11 +122,11 @@ export function KLineChart() {
 
   const fiveDayIntradayData = useMemo(() => {
     if (chartView !== '5day' || recentIntradayHistory.length === 0) return [];
-    const result: { time: number; value: number }[] = [];
+    const result: { time: UTCTimestamp; value: number }[] = [];
     recentIntradayHistory.forEach((dayTicks, dayIndex) => {
       dayTicks.forEach(tick => {
         result.push({
-          time: (dayIndex * 241 + tick.minute) as unknown as number,
+          time: (dayIndex * 241 + tick.minute) as unknown as UTCTimestamp,
           value: tick.price,
         });
       });
@@ -138,7 +138,7 @@ export function KLineChart() {
         .filter(t => t.minute <= currentTick)
         .forEach(tick => {
           result.push({
-            time: (dayIndex * 241 + tick.minute) as unknown as number,
+            time: (dayIndex * 241 + tick.minute) as unknown as UTCTimestamp,
             value: tick.price,
           });
         });
