@@ -12,7 +12,7 @@ export function LunchBreak() {
   const amChange = amOpen > 0 ? ((amClose - amOpen) / amOpen * 100) : 0;
 
   return (
-    <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4">
+    <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4 animate-fadeIn">
       <h3 className="text-white font-bold mb-3">🍜 午间休息 (11:30 - 13:00)</h3>
 
       {/* 上午盘回顾 */}

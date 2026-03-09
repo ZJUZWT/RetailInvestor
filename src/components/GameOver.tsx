@@ -1,4 +1,5 @@
 import { useGameStore } from '../stores/gameStore';
+import { useCountUp } from '../hooks/useCountUp';
 
 export function GameOver() {
   const { gameStatus, peakAssets, cash, shares, currentPrice, goal, totalTradingDays } = useGameStore();
@@ -8,10 +9,13 @@ export function GameOver() {
 
   const totalAssets = cash + shares * currentPrice;
   const isWin = gameStatus === 'won';
+  const animatedAssets = useCountUp(totalAssets, 1500, 2);
+  const animatedPeak = useCountUp(peakAssets, 1500, 2);
+  const animatedCompletion = useCountUp(totalAssets / goal.targetAmount * 100, 1200, 1);
 
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
-      <div className="bg-[#12121a] rounded-xl p-8 max-w-md mx-4 border border-gray-700 text-center">
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 animate-backdropFadeIn">
+      <div className="bg-[#12121a] rounded-xl p-8 max-w-md mx-4 border border-gray-700 text-center animate-modalBounceIn">
         <div className="text-6xl mb-4">{isWin ? '🎉' : '💀'}</div>
 
         <h2 className={`text-3xl font-black mb-2 ${isWin ? 'text-yellow-400' : 'text-red-500'}`}>
@@ -30,17 +34,17 @@ export function GameOver() {
             <div className="text-white font-mono text-right">{totalTradingDays}天</div>
 
             <div className="text-gray-500">最终资产</div>
-            <div className="text-white font-mono text-right">¥{totalAssets.toFixed(2)}</div>
+            <div className="text-white font-mono text-right">¥{animatedAssets}</div>
 
             <div className="text-gray-500">峰值资产</div>
-            <div className="text-yellow-400 font-mono text-right">¥{peakAssets.toFixed(2)}</div>
+            <div className="text-yellow-400 font-mono text-right">¥{animatedPeak}</div>
 
             <div className="text-gray-500">目标金额</div>
             <div className="text-gray-300 font-mono text-right">¥{goal.targetAmount.toLocaleString()}</div>
 
             <div className="text-gray-500">完成度</div>
             <div className={`font-mono text-right ${isWin ? 'text-green-400' : 'text-red-400'}`}>
-              {(totalAssets / goal.targetAmount * 100).toFixed(1)}%
+              {animatedCompletion}%
             </div>
           </div>
         </div>

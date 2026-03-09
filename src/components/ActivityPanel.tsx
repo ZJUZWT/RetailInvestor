@@ -8,7 +8,7 @@ export function ActivityPanel() {
   if (phase !== 'after_hours') return null;
 
   return (
-    <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4">
+    <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4 animate-fadeIn">
       <h3 className="text-white font-bold mb-3">
         🌙 盘后活动 <span className="text-yellow-400 text-sm font-normal">⚡ {stamina}/{maxStamina}</span>
       </h3>

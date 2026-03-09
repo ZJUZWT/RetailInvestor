@@ -11,7 +11,7 @@ export function MainMenu() {
   return (
     <div className="w-full h-screen bg-[#0a0a0f] flex flex-col items-center justify-center">
       <div className="text-center mb-12">
-        <h1 className="text-6xl font-black text-white mb-2">
+        <h1 className="text-6xl font-black text-white mb-2 animate-floatPulse">
           散户大冒险
         </h1>
         <p className="text-gray-500 text-lg">一个炒股主题的Roguelike游戏</p>
