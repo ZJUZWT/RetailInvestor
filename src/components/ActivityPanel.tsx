@@ -2,7 +2,7 @@ import { useGameStore } from '../stores/gameStore';
 import { ACTIVITIES } from '../data/activities';
 
 export function ActivityPanel() {
-  const { phase, stamina, activitiesDoneToday } = useGameStore();
+  const { phase, stamina, maxStamina, activitiesDoneToday } = useGameStore();
   const { doActivity, advancePhase } = useGameStore(s => s.actions);
 
   if (phase !== 'after_hours') return null;
@@ -10,7 +10,7 @@ export function ActivityPanel() {
   return (
     <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4">
       <h3 className="text-white font-bold mb-3">
-        🌙 盘后活动 <span className="text-yellow-400 text-sm font-normal">⚡{stamina} 剩余体力</span>
+        🌙 盘后活动 <span className="text-yellow-400 text-sm font-normal">⚡ {stamina}/{maxStamina}</span>
       </h3>
 
       <div className="space-y-2 mb-4">
@@ -35,9 +35,7 @@ export function ActivityPanel() {
                   <span className="text-lg">{activity.emoji}</span>
                   <span className="font-bold text-sm">{activity.name}</span>
                 </div>
-                <span className="text-xs text-yellow-400">
-                  {activity.staminaCost > 0 ? `⚡${activity.staminaCost}` : '免费'}
-                </span>
+                <span className="text-xs text-yellow-400">⚡{activity.staminaCost}</span>
               </div>
               <p className="text-xs mt-1 ml-7 text-gray-500">{activity.description}</p>
               {done && <p className="text-xs mt-1 ml-7 text-gray-600">（今天已做过）</p>}
@@ -50,7 +48,7 @@ export function ActivityPanel() {
         onClick={advancePhase}
         className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-bold transition-colors"
       >
-        结束活动，进入结算 →
+        😴 睡觉休息，进入结算 →
       </button>
     </div>
   );

@@ -29,11 +29,4 @@ export const ACTIVITIES: Activity[] = [
     staminaCost: 1,
     description: '搞点副业赚外快，可能赚也可能亏（最后的翻盘机会）',
   },
-  {
-    id: 'rest',
-    name: '早点休息',
-    emoji: '😴',
-    staminaCost: 0,
-    description: '养精蓄锐，明天体力+1',
-  },
 ];

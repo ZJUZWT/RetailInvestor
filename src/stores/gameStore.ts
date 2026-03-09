@@ -486,7 +486,7 @@ export const useGameStore = create<StoreState>((set, get) => ({
 
     doActivity: (activityId: string) => {
       const state = get();
-      const costs: Record<string, number> = { social_media: 1, research: 1, socializing: 2, side_hustle: 1, rest: 0 };
+      const costs: Record<string, number> = { social_media: 1, research: 1, socializing: 2, side_hustle: 1 };
       const cost = costs[activityId] ?? 0;
       if (state.stamina < cost) {
         set({ messages: ['❌ 体力不足！'] });

@@ -22,13 +22,9 @@ export function StatusBar() {
           {PHASE_NAMES[phase]}
         </span>
 
-        <div className="flex items-center gap-1">
-          {Array.from({ length: maxStamina }).map((_, i) => (
-            <span key={i} className={i < stamina ? 'text-yellow-400' : 'text-gray-700'}>
-              ⚡
-            </span>
-          ))}
-        </div>
+        <span className={`text-sm ${stamina > 0 ? 'text-yellow-400' : 'text-gray-600'}`}>
+          ⚡ {stamina}/{maxStamina}
+        </span>
 
         <span className={`font-mono ${cash < 0 ? 'text-red-500 animate-pulse' : 'text-green-400'}`}>
           💰 ¥{cash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
