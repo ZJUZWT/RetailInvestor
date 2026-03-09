@@ -2,6 +2,35 @@ import { useEffect, useRef, useMemo } from 'react';
 import { createChart, LineSeries, CandlestickSeries, type IChartApi, type ISeriesApi } from 'lightweight-charts';
 import { useGameStore, type StoreState } from '../stores/gameStore';
 
+/** 计算移动平均线 */
+function calculateMA(
+  data: { time: unknown; close: number }[],
+  period: number,
+): { time: unknown; value: number }[] {
+  const result: { time: unknown; value: number }[] = [];
+  for (let i = period - 1; i < data.length; i++) {
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      sum += data[j].close;
+    }
+    result.push({ time: data[i].time, value: Math.round((sum / period) * 100) / 100 });
+  }
+  return result;
+}
+
+/** 计算分时均价线（累计均价） */
+function calculateAvgPriceLine(
+  data: { time: unknown; value: number }[],
+): { time: unknown; value: number }[] {
+  const result: { time: unknown; value: number }[] = [];
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) {
+    sum += data[i].value;
+    result.push({ time: data[i].time, value: Math.round((sum / (i + 1)) * 100) / 100 });
+  }
+  return result;
+}
+
 export function KLineChart() {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartApiRef = useRef<IChartApi | null>(null);
@@ -11,7 +40,9 @@ export function KLineChart() {
     stockHistory, stockName, currentPrice, todayOpen,
     intradayTicks, currentTick, phase, chartView,
   } = useGameStore();
-  const { setChartView } = useGameStore(s => s.actions);
+  const maVisible = useGameStore(s => s.maVisible);
+  const recentIntradayHistory = useGameStore(s => s.recentIntradayHistory);
+  const { setChartView, toggleMA } = useGameStore(s => s.actions);
 
   const isTrading = phase === 'am_trading' || phase === 'pm_trading';
   const canSwitchView = !isTrading;
@@ -31,6 +62,8 @@ export function KLineChart() {
     }
 
     if (chartView === '5day') {
+      // 5日分时拼接（如果有分时数据），否则回退到5日K线
+      if (recentIntradayHistory.length > 0) return null; // 用分时线渲染
       const recent = history.slice(-5);
       return recent.map(d => ({
         time: d.day as unknown as import('lightweight-charts').UTCTimestamp,
@@ -58,7 +91,7 @@ export function KLineChart() {
       time: d.day as unknown as import('lightweight-charts').UTCTimestamp,
       open: d.open, high: d.high, low: d.low, close: d.close,
     }));
-  }, [stockHistory, chartView]);
+  }, [stockHistory, chartView, recentIntradayHistory]);
 
   // 分时图数据：截取到当前tick
   const intradayData = useMemo(() => {
@@ -70,6 +103,48 @@ export function KLineChart() {
         value: t.price,
       }));
   }, [intradayTicks, currentTick, chartView]);
+
+  const maData = useMemo(() => {
+    if (chartView === 'intraday' || chartView === '5day' || !chartData || chartData.length === 0) return null;
+
+    const withClose = chartData.map(d => ({ ...d, close: d.close }));
+    return {
+      ma5: calculateMA(withClose, 5),
+      ma10: calculateMA(withClose, 10),
+      ma20: calculateMA(withClose, 20),
+    };
+  }, [chartData, chartView]);
+
+  const avgPriceData = useMemo(() => {
+    if (chartView !== 'intraday' || intradayData.length === 0) return [];
+    return calculateAvgPriceLine(intradayData);
+  }, [intradayData, chartView]);
+
+  const fiveDayIntradayData = useMemo(() => {
+    if (chartView !== '5day' || recentIntradayHistory.length === 0) return [];
+    const result: { time: number; value: number }[] = [];
+    recentIntradayHistory.forEach((dayTicks, dayIndex) => {
+      dayTicks.forEach(tick => {
+        result.push({
+          time: (dayIndex * 241 + tick.minute) as unknown as number,
+          value: tick.price,
+        });
+      });
+    });
+    // 追加当天已有的tick
+    if (intradayTicks.length > 0) {
+      const dayIndex = recentIntradayHistory.length;
+      intradayTicks
+        .filter(t => t.minute <= currentTick)
+        .forEach(tick => {
+          result.push({
+            time: (dayIndex * 241 + tick.minute) as unknown as number,
+            value: tick.price,
+          });
+        });
+    }
+    return result;
+  }, [chartView, recentIntradayHistory, intradayTicks, currentTick]);
 
   // 渲染图表
   useEffect(() => {
@@ -102,7 +177,18 @@ export function KLineChart() {
     });
     chartApiRef.current = chart;
 
-    if (chartView === 'intraday') {
+    if (chartView === '5day' && fiveDayIntradayData.length > 0) {
+      const series = chart.addSeries(LineSeries, {
+        color: '#ffffff',
+        lineWidth: 2,
+        priceLineVisible: true,
+        lastValueVisible: true,
+        crosshairMarkerVisible: true,
+      });
+      series.setData(fiveDayIntradayData);
+      seriesRef.current = series;
+      chart.timeScale().fitContent();
+    } else if (chartView === 'intraday') {
       // 分时线
       const series = chart.addSeries(LineSeries, {
         color: '#ffffff',
@@ -128,6 +214,19 @@ export function KLineChart() {
         });
       }
 
+      // 分时均价线
+      if (avgPriceData.length > 0) {
+        const avgSeries = chart.addSeries(LineSeries, {
+          color: '#f97316',
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        avgSeries.setData(avgPriceData);
+      }
+
       seriesRef.current = series;
       chart.timeScale().fitContent();
     } else {
@@ -146,6 +245,24 @@ export function KLineChart() {
       }
 
       seriesRef.current = series;
+
+      // 添加均线
+      const MA_COLORS: Record<string, string> = { ma5: '#f6c244', ma10: '#4a9eff', ma20: '#a855f7' };
+      if (maData) {
+        for (const [key, color] of Object.entries(MA_COLORS)) {
+          if (maVisible[key as keyof typeof maVisible] && maData[key as keyof typeof maData].length > 0) {
+            const maSeries = chart.addSeries(LineSeries, {
+              color,
+              lineWidth: 1,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              crosshairMarkerVisible: false,
+            });
+            maSeries.setData(maData[key as keyof typeof maData]);
+          }
+        }
+      }
+
       chart.timeScale().fitContent();
     }
 
@@ -160,7 +277,7 @@ export function KLineChart() {
       chartApiRef.current = null;
       seriesRef.current = null;
     };
-  }, [chartView, chartData, stockHistory.length]); // 重建条件
+  }, [chartView, chartData, stockHistory.length, maVisible, maData, avgPriceData, fiveDayIntradayData]); // 重建条件
 
   // 分时图实时更新（不重建，只追加数据）
   useEffect(() => {
@@ -208,7 +325,7 @@ export function KLineChart() {
       </div>
 
       {/* K线视图切换按钮 */}
-      <div className="flex gap-1 mb-2">
+      <div className="flex gap-1 mb-2 items-center">
         {VIEW_TABS.map(tab => {
           const isActive = chartView === tab.key;
           const disabled = !canSwitchView && tab.key !== 'intraday';
@@ -230,6 +347,31 @@ export function KLineChart() {
             </button>
           );
         })}
+
+        {/* 均线开关 - 非分时且非5日视图时显示 */}
+        {chartView !== 'intraday' && chartView !== '5day' && (
+          <div className="flex gap-1 items-center ml-auto">
+            <span className="text-xs text-gray-500">MA:</span>
+            {([
+              { key: 'ma5' as const, label: 'MA5', color: '#f6c244' },
+              { key: 'ma10' as const, label: 'MA10', color: '#4a9eff' },
+              { key: 'ma20' as const, label: 'MA20', color: '#a855f7' },
+            ]).map(ma => (
+              <button
+                key={ma.key}
+                onClick={() => toggleMA(ma.key)}
+                className={`px-1.5 py-0.5 text-xs rounded transition-colors ${
+                  maVisible[ma.key]
+                    ? 'opacity-100'
+                    : 'opacity-30'
+                }`}
+                style={{ color: ma.color, borderColor: ma.color, borderWidth: '1px', borderStyle: 'solid' }}
+              >
+                {ma.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 图表 */}
