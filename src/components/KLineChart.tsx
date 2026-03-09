@@ -312,8 +312,20 @@ export function KLineChart() {
     }
   }, [currentTick]);
 
+  // Price direction tracking for flash animation
+  const prevPriceRef = useRef(currentPrice);
+  const priceDirection = currentPrice > prevPriceRef.current ? 'up'
+    : currentPrice < prevPriceRef.current ? 'down'
+    : 'flat';
+
+  useEffect(() => {
+    prevPriceRef.current = currentPrice;
+  }, [currentPrice]);
+
   const changePercent = todayOpen > 0 ? ((currentPrice - todayOpen) / todayOpen * 100) : 0;
   const isUp = changePercent >= 0;
+  const isLimitUp = changePercent >= 9.9;
+  const isLimitDown = changePercent <= -9.9;
 
   // 当前时间标签
   const timeLabel = intradayTicks[currentTick]?.timeLabel ?? '';
@@ -336,13 +348,20 @@ export function KLineChart() {
             <span className="text-yellow-400 text-sm ml-2 font-mono">{timeLabel}</span>
           )}
         </div>
-        <div className="text-right">
-          <span className={`text-2xl font-bold font-mono ${isUp ? 'text-red-500' : 'text-green-500'}`}>
+        <div className="text-right flex items-center">
+          <span
+            key={currentPrice}
+            className={`text-2xl font-bold font-mono rounded px-2 ${isUp ? 'text-red-500' : 'text-green-500'} ${
+              priceDirection === 'up' ? 'animate-priceFlashRed' : priceDirection === 'down' ? 'animate-priceFlashGreen' : ''
+            } ${isLimitUp ? 'animate-pulseGlowRed' : isLimitDown ? 'animate-pulseGlowGreen' : ''}`}
+          >
             ¥{currentPrice.toFixed(2)}
           </span>
           <span className={`text-sm ml-2 ${isUp ? 'text-red-400' : 'text-green-400'}`}>
             {isUp ? '+' : ''}{changePercent.toFixed(2)}%
           </span>
+          {isLimitUp && <span className="animate-bounceIn text-red-500 font-black text-sm ml-2">涨停！</span>}
+          {isLimitDown && <span className="animate-bounceIn text-green-500 font-black text-sm ml-2">跌停！</span>}
         </div>
       </div>
 
