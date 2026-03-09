@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { GameState, GamePhase, Card } from '../types';
+import type { GameState, GamePhase, Card, OpeningPattern, MAVisible } from '../types';
 import type { IntradayTick } from '../engine/IntradaySimulator';
 import { getRandomGoal } from '../data/goals';
 import {
@@ -7,6 +7,8 @@ import {
   getTrendForDay,
   getRandomStockName,
   getInitialPrice,
+  getRandomOpeningPattern,
+  generateHistoryData,
 } from '../engine/StockSimulator';
 import {
   generateIntradayTicks,
@@ -57,6 +59,8 @@ export interface StoreState extends GameState {
   playbackSpeed: PlaybackSpeed;       // 播放速度
   tickTimerId: number | null;         // setInterval id
   chartView: 'intraday' | 'daily' | 'weekly' | 'monthly' | '5day'; // K线视图
+  recentIntradayHistory: IntradayTick[][]; // 最近5天分时数据
+  maVisible: MAVisible;                    // 均线显示开关
 }
 
 interface GameActions {
@@ -79,6 +83,7 @@ interface GameActions {
   startPlayback: () => void;
   stopPlayback: () => void;
   setChartView: (view: StoreState['chartView']) => void;
+  toggleMA: (key: keyof MAVisible) => void;
 }
 
 function createInitialState(): Omit<StoreState, 'actions'> {
@@ -119,6 +124,10 @@ function createInitialState(): Omit<StoreState, 'actions'> {
     playbackSpeed: 1,
     tickTimerId: null,
     chartView: 'intraday',
+    recentIntradayHistory: [],
+    maVisible: { ma5: true, ma10: true, ma20: true },
+    historyDays: 0,
+    openingPattern: 'sideways_consolidation' as OpeningPattern,
   };
 }
 
@@ -130,23 +139,37 @@ export const useGameStore = create<StoreState>((set, get) => ({
       get().actions.stopPlayback();
       const price = getInitialPrice();
       const goal = getRandomGoal();
-      const segments = generateTrendSegments();
+      const pattern = getRandomOpeningPattern();
+      const historyDays = 250;
+      const segments = generateTrendSegments(historyDays, 200, pattern);
       const stockName = getRandomStockName();
+
+      // 批量生成历史日K
+      const historyData = generateHistoryData(historyDays, price, segments);
+      const lastClose = historyData.length > 0
+        ? historyData[historyData.length - 1].close
+        : price;
+      const startDay = historyDays + 1;
 
       set({
         ...createInitialState(),
-        day: 1,
+        day: startDay,
         phase: 'morning_news',
         gameStatus: 'playing',
-        currentPrice: price,
-        todayOpen: price,
-        amClose: price,
+        currentPrice: lastClose,
+        todayOpen: lastClose,
+        amClose: lastClose,
         goal,
         trendSegments: segments,
         stockName,
+        stockHistory: historyData,
+        historyDays,
+        openingPattern: pattern,
+        recentIntradayHistory: [],
+        maVisible: { ma5: true, ma10: true, ma20: true },
         messages: [
           `欢迎来到股市！你的目标：${goal.title}（¥${goal.targetAmount.toLocaleString()}）`,
-          `你选择了【${stockName}】，当前价格 ¥${price}`,
+          `你选择了【${stockName}】，当前价格 ¥${lastClose}`,
           '祝你好运，散户！',
         ],
       });
@@ -239,12 +262,17 @@ export const useGameStore = create<StoreState>((set, get) => ({
         const dayData = { day: state.day, ...ohlc };
         const changePercent = ((closePrice - state.todayOpen) / state.todayOpen * 100).toFixed(2);
 
+        // 保留最近5天分时数据
+        const recentHistory = [...state.recentIntradayHistory, state.intradayTicks];
+        if (recentHistory.length > 5) recentHistory.shift();
+
         set({
           phase: 'after_hours',
           currentTick: TOTAL_TICKS - 1,
           currentPrice: closePrice,
           stockHistory: [...state.stockHistory, dayData],
-          chartView: 'intraday', // 默认仍看分时
+          recentIntradayHistory: recentHistory,
+          chartView: 'intraday',
           messages: [
             `📊 收盘价: ¥${closePrice.toFixed(2)} (${Number(changePercent) >= 0 ? '+' : ''}${changePercent}%)`,
             `⚡ 盘后活动时间 | 剩余体力: ${state.stamina}`,
@@ -270,6 +298,11 @@ export const useGameStore = create<StoreState>((set, get) => ({
         return; // 锁定分时图
       }
       set({ chartView: view });
+    },
+
+    toggleMA: (key: keyof MAVisible) => {
+      const state = get();
+      set({ maVisible: { ...state.maVisible, [key]: !state.maVisible[key] } });
     },
 
     // ==================== 回合推进 ====================
@@ -330,7 +363,7 @@ export const useGameStore = create<StoreState>((set, get) => ({
           eventModifier: eventMod,
           extraStaminaNextDay: 0,
           messages: [
-            `=== 第 ${nextDay} 天 ===`,
+            `=== 第 ${nextDay - state.historyDays} 天 ===`,
             `📰 ${todayEvent.title}`,
             todayEvent.description,
           ],
