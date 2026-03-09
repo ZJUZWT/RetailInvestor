@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { useGameStore } from './stores/gameStore';
 import { StatusBar } from './components/StatusBar';
 import { KLineChart } from './components/KLineChart';
@@ -47,12 +48,23 @@ function GameScreen() {
 }
 
 function App() {
+  const [shaking, setShaking] = useState(false);
+
+  useEffect(() => {
+    const handler = () => {
+      setShaking(true);
+      setTimeout(() => setShaking(false), 800);
+    };
+    window.addEventListener('screen-shake', handler);
+    return () => window.removeEventListener('screen-shake', handler);
+  }, []);
+
   return (
-    <>
+    <div className={shaking ? 'animate-shakeScreen' : ''}>
       <MainMenu />
       <GameScreen />
       <GameOver />
-    </>
+    </div>
   );
 }
 
