@@ -1,0 +1,246 @@
+import { useEffect, useRef, useMemo } from 'react';
+import { createChart, LineSeries, CandlestickSeries, type IChartApi, type ISeriesApi } from 'lightweight-charts';
+import { useGameStore, type StoreState } from '../stores/gameStore';
+
+export function KLineChart() {
+  const chartRef = useRef<HTMLDivElement>(null);
+  const chartApiRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Line'> | ISeriesApi<'Candlestick'> | null>(null);
+
+  const {
+    stockHistory, stockName, currentPrice, todayOpen,
+    intradayTicks, currentTick, phase, chartView,
+  } = useGameStore();
+  const { setChartView } = useGameStore(s => s.actions);
+
+  const isTrading = phase === 'am_trading' || phase === 'pm_trading';
+  const canSwitchView = !isTrading;
+
+  // 计算K线聚合数据
+  const chartData = useMemo(() => {
+    if (chartView === 'intraday') return null; // 分时图单独处理
+
+    const history = stockHistory;
+    if (history.length === 0) return [];
+
+    if (chartView === 'daily') {
+      return history.map(d => ({
+        time: d.day as unknown as import('lightweight-charts').UTCTimestamp,
+        open: d.open, high: d.high, low: d.low, close: d.close,
+      }));
+    }
+
+    if (chartView === '5day') {
+      const recent = history.slice(-5);
+      return recent.map(d => ({
+        time: d.day as unknown as import('lightweight-charts').UTCTimestamp,
+        open: d.open, high: d.high, low: d.low, close: d.close,
+      }));
+    }
+
+    // 周K / 月K 聚合
+    const groupSize = chartView === 'weekly' ? 5 : 20; // 5交易日/周, ~20交易日/月
+    const grouped: typeof history[number][] = [];
+
+    for (let i = 0; i < history.length; i += groupSize) {
+      const chunk = history.slice(i, i + groupSize);
+      if (chunk.length === 0) continue;
+      grouped.push({
+        day: chunk[0].day,
+        open: chunk[0].open,
+        close: chunk[chunk.length - 1].close,
+        high: Math.max(...chunk.map(c => c.high)),
+        low: Math.min(...chunk.map(c => c.low)),
+      });
+    }
+
+    return grouped.map(d => ({
+      time: d.day as unknown as import('lightweight-charts').UTCTimestamp,
+      open: d.open, high: d.high, low: d.low, close: d.close,
+    }));
+  }, [stockHistory, chartView]);
+
+  // 分时图数据：截取到当前tick
+  const intradayData = useMemo(() => {
+    if (chartView !== 'intraday' || intradayTicks.length === 0) return [];
+    return intradayTicks
+      .filter(t => t.minute <= currentTick)
+      .map(t => ({
+        time: t.minute as unknown as import('lightweight-charts').UTCTimestamp,
+        value: t.price,
+      }));
+  }, [intradayTicks, currentTick, chartView]);
+
+  // 渲染图表
+  useEffect(() => {
+    if (!chartRef.current) return;
+
+    if (chartApiRef.current) {
+      chartApiRef.current.remove();
+      chartApiRef.current = null;
+      seriesRef.current = null;
+    }
+
+    const chart = createChart(chartRef.current, {
+      layout: {
+        background: { color: '#0a0a0f' },
+        textColor: '#9ca3af',
+        fontSize: 11,
+      },
+      grid: {
+        vertLines: { color: '#1a1a2e' },
+        horzLines: { color: '#1a1a2e' },
+      },
+      width: chartRef.current.clientWidth,
+      height: 300,
+      crosshair: { mode: 0 },
+      timeScale: {
+        borderColor: '#1a1a2e',
+        timeVisible: false,
+      },
+      rightPriceScale: { borderColor: '#1a1a2e' },
+    });
+    chartApiRef.current = chart;
+
+    if (chartView === 'intraday') {
+      // 分时线
+      const series = chart.addSeries(LineSeries, {
+        color: '#ffffff',
+        lineWidth: 2,
+        priceLineVisible: true,
+        lastValueVisible: true,
+        crosshairMarkerVisible: true,
+      });
+
+      if (intradayData.length > 0) {
+        series.setData(intradayData);
+      }
+
+      // 昨收均价线
+      if (todayOpen > 0) {
+        series.createPriceLine({
+          price: todayOpen,
+          color: '#666',
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: '开盘',
+        });
+      }
+
+      seriesRef.current = series;
+      chart.timeScale().fitContent();
+    } else {
+      // K线图
+      const series = chart.addSeries(CandlestickSeries, {
+        upColor: '#ef4444',
+        downColor: '#22c55e',
+        borderUpColor: '#ef4444',
+        borderDownColor: '#22c55e',
+        wickUpColor: '#ef4444',
+        wickDownColor: '#22c55e',
+      });
+
+      if (chartData && chartData.length > 0) {
+        series.setData(chartData);
+      }
+
+      seriesRef.current = series;
+      chart.timeScale().fitContent();
+    }
+
+    const handleResize = () => {
+      if (chartRef.current) chart.applyOptions({ width: chartRef.current.clientWidth });
+    };
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      chart.remove();
+      chartApiRef.current = null;
+      seriesRef.current = null;
+    };
+  }, [chartView, chartData, stockHistory.length]); // 重建条件
+
+  // 分时图实时更新（不重建，只追加数据）
+  useEffect(() => {
+    if (chartView !== 'intraday' || !seriesRef.current || intradayData.length === 0) return;
+    try {
+      const last = intradayData[intradayData.length - 1];
+      (seriesRef.current as ISeriesApi<'Line'>).update(last);
+    } catch {
+      // 忽略
+    }
+  }, [currentTick]);
+
+  const changePercent = todayOpen > 0 ? ((currentPrice - todayOpen) / todayOpen * 100) : 0;
+  const isUp = changePercent >= 0;
+
+  // 当前时间标签
+  const timeLabel = intradayTicks[currentTick]?.timeLabel ?? '';
+
+  const VIEW_TABS: { key: StoreState['chartView']; label: string }[] = [
+    { key: 'intraday', label: '分时' },
+    { key: 'daily', label: '日K' },
+    { key: '5day', label: '5日' },
+    { key: 'weekly', label: '周K' },
+    { key: 'monthly', label: '月K' },
+  ];
+
+  return (
+    <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4">
+      {/* 头部信息 */}
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <span className="text-white font-bold text-lg">{stockName}</span>
+          {isTrading && timeLabel && (
+            <span className="text-yellow-400 text-sm ml-2 font-mono">{timeLabel}</span>
+          )}
+        </div>
+        <div className="text-right">
+          <span className={`text-2xl font-bold font-mono ${isUp ? 'text-red-500' : 'text-green-500'}`}>
+            ¥{currentPrice.toFixed(2)}
+          </span>
+          <span className={`text-sm ml-2 ${isUp ? 'text-red-400' : 'text-green-400'}`}>
+            {isUp ? '+' : ''}{changePercent.toFixed(2)}%
+          </span>
+        </div>
+      </div>
+
+      {/* K线视图切换按钮 */}
+      <div className="flex gap-1 mb-2">
+        {VIEW_TABS.map(tab => {
+          const isActive = chartView === tab.key;
+          const disabled = !canSwitchView && tab.key !== 'intraday';
+          return (
+            <button
+              key={tab.key}
+              onClick={() => setChartView(tab.key)}
+              disabled={disabled}
+              className={`px-2 py-0.5 text-xs rounded transition-colors ${
+                isActive
+                  ? 'bg-blue-600 text-white'
+                  : disabled
+                    ? 'bg-gray-900 text-gray-700 cursor-not-allowed'
+                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+              }`}
+            >
+              {tab.label}
+              {disabled && tab.key !== 'intraday' && ' 🔒'}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 图表 */}
+      <div ref={chartRef} />
+
+      {/* 盘中锁定提示 */}
+      {isTrading && (
+        <p className="text-xs text-gray-600 mt-1">
+          盘中仅显示分时图，收盘后可切换日K/周K/月K
+        </p>
+      )}
+    </div>
+  );
+}
