@@ -130,6 +130,29 @@ export interface TrendSegment {
   volatility: number;
 }
 
+// === 开局模式 ===
+export type OpeningPattern =
+  | 'slow_bull_pullback'    // 慢牛回调
+  | 'dark_decline_bottom'   // 暗跌见底
+  | 'sideways_consolidation'// 震荡盘整
+  | 'surge_high'            // 暴涨后高位
+  | 'v_shape_rebound';      // V型反弹
+
+export const OPENING_PATTERN_NAMES: Record<OpeningPattern, string> = {
+  slow_bull_pullback: '慢牛回调',
+  dark_decline_bottom: '暗跌见底',
+  sideways_consolidation: '震荡盘整',
+  surge_high: '暴涨后高位',
+  v_shape_rebound: 'V型反弹',
+};
+
+// === 均线显示 ===
+export interface MAVisible {
+  ma5: boolean;
+  ma10: boolean;
+  ma20: boolean;
+}
+
 // === 活动结果 ===
 export interface ActivityResult {
   message: string;
@@ -158,6 +181,8 @@ export interface GameState {
   stockHistory: StockDataPoint[];
   trendSegments: TrendSegment[];
   stockName: string;
+  historyDays: number;            // 历史预生成天数（250）
+  openingPattern: OpeningPattern; // 本局开局模式
 
   boughtToday: boolean;
   todayOpen: number;
