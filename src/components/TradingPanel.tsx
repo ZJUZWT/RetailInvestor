@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useGameStore, type PlaybackSpeed } from '../stores/gameStore';
 
 export function TradingPanel() {
@@ -8,6 +8,20 @@ export function TradingPanel() {
   } = useGameStore();
   const { buy, sell, setPlaybackSpeed } = useGameStore(s => s.actions);
   const [amount, setAmount] = useState('');
+  const [toasts, setToasts] = useState<{ id: number; message: string; type: 'buy' | 'sell' }[]>([]);
+  const toastIdRef = useRef(0);
+
+  const showToast = (message: string, type: 'buy' | 'sell') => {
+    const id = toastIdRef.current++;
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 2300);
+  };
+
+  const prevCashRef = useRef(cash);
+  const prevSharesRef = useRef(shares);
+
+  useEffect(() => { prevCashRef.current = cash; }, [cash]);
+  useEffect(() => { prevSharesRef.current = shares; }, [shares]);
 
   const isTrading = phase === 'am_trading' || phase === 'pm_trading';
   if (!isTrading) return null;
@@ -20,6 +34,7 @@ export function TradingPanel() {
   const handleBuy = () => {
     if (shareAmount > 0 && shareAmount <= maxBuyShares) {
       buy(shareAmount);
+      showToast(`买入 ${shareAmount} 股 ¥${(shareAmount * currentPrice).toFixed(0)}`, 'buy');
       setAmount('');
     }
   };
@@ -27,6 +42,7 @@ export function TradingPanel() {
   const handleSell = () => {
     if (shareAmount > 0 && shareAmount <= shares) {
       sell(shareAmount);
+      showToast(`卖出 ${shareAmount} 股 ¥${(shareAmount * currentPrice).toFixed(0)}`, 'sell');
       setAmount('');
     }
   };
@@ -69,10 +85,10 @@ export function TradingPanel() {
       {/* 持仓信息 */}
       <div className="grid grid-cols-2 gap-2 text-sm mb-3">
         <div className="text-gray-400">
-          可用 <span className="text-green-400 font-mono">¥{cash.toFixed(2)}</span>
+          可用 <span key={cash} className="text-green-400 font-mono animate-flashHighlight rounded px-1">¥{cash.toFixed(2)}</span>
         </div>
         <div className="text-gray-400">
-          持仓 <span className="text-blue-400 font-mono">{shares}股</span>
+          持仓 <span key={shares} className="text-blue-400 font-mono animate-flashHighlight rounded px-1">{shares}股</span>
         </div>
         {shares > 0 && (
           <>
@@ -132,6 +148,22 @@ export function TradingPanel() {
           卖出
         </button>
       </div>
+
+      {/* Toast 通知 */}
+      {toasts.length > 0 && (
+        <div className="fixed top-4 right-4 z-50 space-y-2">
+          {toasts.map(toast => (
+            <div
+              key={toast.id}
+              className={`animate-slideInRight px-4 py-2 rounded-lg text-sm font-bold shadow-lg ${
+                toast.type === 'buy' ? 'bg-red-600 text-white' : 'bg-green-600 text-white'
+              }`}
+            >
+              {toast.type === 'buy' ? '\u{1F4C8}' : '\u{1F4C9}'} {toast.message}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
