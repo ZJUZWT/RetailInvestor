@@ -23,6 +23,184 @@ body {
   animation: fadeIn 0.3s ease-out;
 }
 
+/* === 入场动画 === */
+@keyframes scaleIn {
+  0% { opacity: 0; transform: scale(0.8); }
+  70% { opacity: 1; transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+.animate-scaleIn {
+  animation: scaleIn 0.5s ease-out;
+}
+
+/* === 震屏 === */
+@keyframes shakeScreen {
+  0%, 100% { transform: translate(0, 0); }
+  10% { transform: translate(-8px, -4px); }
+  20% { transform: translate(8px, 4px); }
+  30% { transform: translate(-6px, 6px); }
+  40% { transform: translate(6px, -6px); }
+  50% { transform: translate(-4px, 4px); }
+  60% { transform: translate(4px, -4px); }
+  70% { transform: translate(-2px, 2px); }
+  80% { transform: translate(2px, -2px); }
+  90% { transform: translate(-1px, 1px); }
+}
+.animate-shakeScreen {
+  animation: shakeScreen 0.8s ease-out;
+}
+
+/* === 光晕脉冲 === */
+@keyframes glowPulseBlue {
+  0%, 100% { box-shadow: 0 0 8px rgba(74, 158, 255, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(74, 158, 255, 0.7), 0 0 40px rgba(74, 158, 255, 0.3); }
+}
+.animate-glowPulseBlue {
+  animation: glowPulseBlue 1.5s ease-in-out infinite;
+}
+
+@keyframes glowPulseGold {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 179, 64, 0.4); }
+  50% { box-shadow: 0 0 30px rgba(255, 179, 64, 0.8), 0 0 60px rgba(255, 179, 64, 0.4); }
+}
+.animate-glowPulseGold {
+  animation: glowPulseGold 1.5s ease-in-out infinite;
+}
+
+/* === 价格闪烁 === */
+@keyframes priceFlashRed {
+  0% { background-color: transparent; }
+  30% { background-color: rgba(239, 68, 68, 0.25); }
+  100% { background-color: transparent; }
+}
+@keyframes priceFlashGreen {
+  0% { background-color: transparent; }
+  30% { background-color: rgba(34, 197, 94, 0.25); }
+  100% { background-color: transparent; }
+}
+.animate-priceFlashRed {
+  animation: priceFlashRed 0.5s ease-out;
+}
+.animate-priceFlashGreen {
+  animation: priceFlashGreen 0.5s ease-out;
+}
+
+/* === 高亮闪烁 === */
+@keyframes flashHighlight {
+  0% { background-color: transparent; }
+  25% { background-color: rgba(250, 204, 21, 0.2); }
+  100% { background-color: transparent; }
+}
+.animate-flashHighlight {
+  animation: flashHighlight 0.5s ease-out;
+}
+
+/* === Toast 滑入/淡出 === */
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.animate-slideInRight {
+  animation: slideInRight 0.3s ease-out;
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+.animate-fadeOut {
+  animation: fadeOut 0.3s ease-in forwards;
+}
+
+/* === 弹跳入场 === */
+@keyframes bounceIn {
+  0% { opacity: 0; transform: scale(0.3); }
+  50% { opacity: 1; transform: scale(1.1); }
+  70% { transform: scale(0.95); }
+  100% { transform: scale(1); }
+}
+.animate-bounceIn {
+  animation: bounceIn 0.5s ease-out;
+}
+
+/* === 卡牌翻转 === */
+@keyframes cardFlip {
+  0% { transform: perspective(600px) rotateY(180deg); opacity: 0; }
+  40% { opacity: 1; }
+  100% { transform: perspective(600px) rotateY(0deg); opacity: 1; }
+}
+.animate-cardFlip {
+  animation: cardFlip 0.6s ease-out;
+  backface-visibility: hidden;
+}
+
+/* === 缩小淡出 === */
+@keyframes fadeScaleOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.8); }
+}
+.animate-fadeScaleOut {
+  animation: fadeScaleOut 0.3s ease-in forwards;
+}
+
+/* === 弹窗动画 === */
+@keyframes backdropFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-backdropFadeIn {
+  animation: backdropFadeIn 0.3s ease-out;
+}
+
+@keyframes modalBounceIn {
+  0% { opacity: 0; transform: scale(0.8) translateY(20px); }
+  60% { opacity: 1; transform: scale(1.03) translateY(-5px); }
+  100% { transform: scale(1) translateY(0); }
+}
+.animate-modalBounceIn {
+  animation: modalBounceIn 0.4s ease-out;
+}
+
+/* === 主菜单呼吸浮动 === */
+@keyframes floatPulse {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+.animate-floatPulse {
+  animation: floatPulse 3s ease-in-out infinite;
+}
+
+/* === 涨停/跌停脉冲光晕 === */
+@keyframes pulseGlowRed {
+  0%, 100% { text-shadow: 0 0 4px rgba(239, 68, 68, 0.5); }
+  50% { text-shadow: 0 0 16px rgba(239, 68, 68, 1), 0 0 32px rgba(239, 68, 68, 0.5); }
+}
+@keyframes pulseGlowGreen {
+  0%, 100% { text-shadow: 0 0 4px rgba(34, 197, 94, 0.5); }
+  50% { text-shadow: 0 0 16px rgba(34, 197, 94, 1), 0 0 32px rgba(34, 197, 94, 0.5); }
+}
+.animate-pulseGlowRed {
+  animation: pulseGlowRed 1s ease-in-out infinite;
+}
+.animate-pulseGlowGreen {
+  animation: pulseGlowGreen 1s ease-in-out infinite;
+}
+
+/* === 金色光芒覆盖层 === */
+@keyframes goldenBurst {
+  0% { opacity: 0; transform: scale(0.5); }
+  30% { opacity: 0.8; }
+  100% { opacity: 0; transform: scale(2.5); }
+}
+.legendary-burst::before {
+  content: '';
+  position: absolute;
+  inset: -50%;
+  background: radial-gradient(circle, rgba(255, 179, 64, 0.4) 0%, transparent 70%);
+  animation: goldenBurst 1s ease-out;
+  pointer-events: none;
+}
+
 /* 滚动条样式 */
 ::-webkit-scrollbar {
   width: 4px;
