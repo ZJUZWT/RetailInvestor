@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useGameStore, type PlaybackSpeed } from '../stores/gameStore';
 
 export function TradingPanel() {
@@ -7,7 +7,10 @@ export function TradingPanel() {
     playbackSpeed, intradayTicks, currentTick,
   } = useGameStore();
   const { buy, sell, setPlaybackSpeed } = useGameStore(s => s.actions);
-  const [amount, setAmount] = useState('');
+
+  // 仓位百分比 (0-100)，买卖共用
+  const [posPercent, setPosPercent] = useState(0);
+  const [mode, setMode] = useState<'buy' | 'sell'>('buy');
   const [toasts, setToasts] = useState<{ id: number; message: string; type: 'buy' | 'sell' }[]>([]);
   const toastIdRef = useRef(0);
 
@@ -21,15 +24,23 @@ export function TradingPanel() {
   if (!isTrading) return null;
 
   const maxBuyShares = Math.floor(cash / currentPrice / 100) * 100;
-  const shareAmount = parseInt(amount) || 0;
   const profitPerShare = shares > 0 ? currentPrice - shareCostBasis : 0;
   const profitPercent = shareCostBasis > 0 ? (profitPerShare / shareCostBasis * 100) : 0;
+
+  // 根据模式和百分比计算股数
+  const baseShares = mode === 'buy' ? maxBuyShares : shares;
+  const shareAmount = Math.floor(baseShares * posPercent / 100 / 100) * 100;
+  const cost = shareAmount * currentPrice;
+
+  const setQuickPercent = useCallback((pct: number) => {
+    setPosPercent(pct);
+  }, []);
 
   const handleBuy = () => {
     if (shareAmount > 0 && shareAmount <= maxBuyShares) {
       buy(shareAmount);
       showToast(`买入 ${shareAmount} 股 ¥${(shareAmount * currentPrice).toFixed(0)}`, 'buy');
-      setAmount('');
+      setPosPercent(0);
     }
   };
 
@@ -37,7 +48,7 @@ export function TradingPanel() {
     if (shareAmount > 0 && shareAmount <= shares) {
       sell(shareAmount);
       showToast(`卖出 ${shareAmount} 股 ¥${(shareAmount * currentPrice).toFixed(0)}`, 'sell');
-      setAmount('');
+      setPosPercent(0);
     }
   };
 
@@ -49,6 +60,15 @@ export function TradingPanel() {
     { speed: 2, label: '2x', icon: '⏩' },
     { speed: 3, label: '3x', icon: '⏭' },
   ];
+
+  const QUICK_BUTTONS = [
+    { label: '1/3仓', pct: 33 },
+    { label: '1/2仓', pct: 50 },
+    { label: '全仓', pct: 100 },
+  ];
+
+  const canBuy = mode === 'buy' && shareAmount > 0 && shareAmount <= maxBuyShares;
+  const canSell = mode === 'sell' && shareAmount > 0 && shareAmount <= shares && !boughtToday;
 
   return (
     <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4">
@@ -104,44 +124,103 @@ export function TradingPanel() {
         )}
       </div>
 
-      {/* 交易输入 */}
-      <div className="flex gap-2 mb-2">
-        <input
-          type="number"
-          value={amount}
-          onChange={e => setAmount(e.target.value)}
-          placeholder="股数（100整数倍）"
-          className="flex-1 bg-[#1a1a2e] text-white rounded px-3 py-2 text-sm border border-gray-700 focus:border-blue-500 focus:outline-none font-mono"
-          step={100}
-          min={0}
-        />
-      </div>
-
-      {/* 快捷按钮 */}
-      <div className="flex gap-1 mb-2">
-        <button onClick={() => setAmount(String(maxBuyShares))} className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded hover:bg-gray-700">全仓买</button>
-        <button onClick={() => setAmount(String(Math.floor(maxBuyShares / 2 / 100) * 100))} className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded hover:bg-gray-700">半仓买</button>
-        <button onClick={() => setAmount(String(shares))} className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded hover:bg-gray-700">全部卖</button>
-        <button onClick={() => setAmount(String(Math.floor(shares / 2 / 100) * 100))} className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded hover:bg-gray-700">卖一半</button>
-      </div>
-
-      {/* 买入/卖出按钮 */}
-      <div className="flex gap-2">
+      {/* 买入/卖出模式切换 */}
+      <div className="flex gap-1 mb-3">
         <button
-          onClick={handleBuy}
-          disabled={shareAmount <= 0 || shareAmount > maxBuyShares}
-          className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded font-bold transition-colors"
+          onClick={() => { setMode('buy'); setPosPercent(0); }}
+          className={`flex-1 py-1.5 text-sm font-bold rounded-t transition-colors ${
+            mode === 'buy'
+              ? 'bg-red-600/20 text-red-400 border border-red-600/50 border-b-0'
+              : 'bg-gray-800/50 text-gray-500 border border-gray-700/50 border-b-0'
+          }`}
         >
           买入
         </button>
         <button
-          onClick={handleSell}
-          disabled={shareAmount <= 0 || shareAmount > shares || boughtToday}
-          className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded font-bold transition-colors"
+          onClick={() => { setMode('sell'); setPosPercent(0); }}
+          className={`flex-1 py-1.5 text-sm font-bold rounded-t transition-colors ${
+            mode === 'sell'
+              ? 'bg-green-600/20 text-green-400 border border-green-600/50 border-b-0'
+              : 'bg-gray-800/50 text-gray-500 border border-gray-700/50 border-b-0'
+          }`}
         >
           卖出
         </button>
       </div>
+
+      {/* 快捷比例按钮 */}
+      <div className="flex gap-1.5 mb-2">
+        {QUICK_BUTTONS.map(btn => (
+          <button
+            key={btn.pct}
+            onClick={() => setQuickPercent(btn.pct)}
+            className={`flex-1 text-xs py-1.5 rounded transition-colors ${
+              posPercent === btn.pct
+                ? mode === 'buy'
+                  ? 'bg-red-600/30 text-red-300 border border-red-600/50'
+                  : 'bg-green-600/30 text-green-300 border border-green-600/50'
+                : 'bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700'
+            }`}
+          >
+            {btn.label}
+          </button>
+        ))}
+      </div>
+
+      {/* 仓位滑块 */}
+      <div className="mb-3">
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={posPercent}
+          onChange={e => setPosPercent(Number(e.target.value))}
+          className={`w-full h-1.5 rounded-lg appearance-none cursor-pointer ${
+            mode === 'buy' ? 'accent-red-500' : 'accent-green-500'
+          } bg-gray-700`}
+        />
+        <div className="flex justify-between text-xs text-gray-500 mt-1 font-mono">
+          <span>0%</span>
+          <span className={mode === 'buy' ? 'text-red-400' : 'text-green-400'}>
+            {posPercent}%
+          </span>
+          <span>100%</span>
+        </div>
+      </div>
+
+      {/* 股数 & 金额显示 */}
+      <div className="flex justify-between items-center text-sm mb-3 bg-[#1a1a2e] rounded px-3 py-2 border border-gray-700">
+        <span className="text-gray-400">
+          {mode === 'buy' ? '买入' : '卖出'}
+          <span className={`font-mono font-bold ml-1 ${mode === 'buy' ? 'text-red-400' : 'text-green-400'}`}>
+            {shareAmount}
+          </span>
+          <span className="text-gray-500 ml-0.5">股</span>
+        </span>
+        <span className="text-gray-400 font-mono">
+          ≈ ¥{cost.toFixed(0)}
+        </span>
+      </div>
+
+      {/* 执行按钮 */}
+      {mode === 'buy' ? (
+        <button
+          onClick={handleBuy}
+          disabled={!canBuy}
+          className="w-full bg-red-600 hover:bg-red-700 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2.5 rounded font-bold transition-colors"
+        >
+          买入 {shareAmount > 0 ? `${shareAmount}股` : ''}
+        </button>
+      ) : (
+        <button
+          onClick={handleSell}
+          disabled={!canSell}
+          className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2.5 rounded font-bold transition-colors"
+        >
+          卖出 {shareAmount > 0 ? `${shareAmount}股` : ''}
+        </button>
+      )}
 
       {/* Toast 通知 */}
       {toasts.length > 0 && (
