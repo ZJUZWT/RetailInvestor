@@ -1,9 +1,20 @@
+import { useState, useEffect } from 'react';
 import { useGameStore } from '../stores/gameStore';
 import { RARITY_COLORS } from '../types';
 
 export function CardSlots() {
   const { cards, maxCardSlots, pendingCard } = useGameStore();
   const { replaceCardAt, dismissPendingCard } = useGameStore(s => s.actions);
+
+  const [flipped, setFlipped] = useState(false);
+
+  useEffect(() => {
+    if (pendingCard) {
+      setFlipped(false);
+      const timer = setTimeout(() => setFlipped(true), 100);
+      return () => clearTimeout(timer);
+    }
+  }, [pendingCard]);
 
   return (
     <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4">
@@ -27,7 +38,7 @@ export function CardSlots() {
           return (
             <div
               key={card.id}
-              className="rounded p-2 text-xs"
+              className="rounded p-2 text-xs animate-fadeIn"
               style={{
                 border: `1px solid ${color}60`,
                 background: `${color}10`,
@@ -46,21 +57,31 @@ export function CardSlots() {
 
       {/* 待选择卡牌弹窗 */}
       {pendingCard && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-          <div className="bg-[#1a1a2e] rounded-lg p-6 max-w-sm mx-4 border border-gray-700">
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 animate-backdropFadeIn">
+          <div className="bg-[#1a1a2e] rounded-lg p-6 max-w-sm mx-4 border border-gray-700 animate-modalBounceIn">
             <h4 className="text-white font-bold mb-3">获得新卡牌！</h4>
             <div
-              className="rounded p-3 mb-4"
+              className={`rounded p-3 mb-4 ${flipped ? 'animate-cardFlip' : ''}`}
               style={{
                 border: `2px solid ${RARITY_COLORS[pendingCard.card.rarity]}`,
-                background: `${RARITY_COLORS[pendingCard.card.rarity]}15`,
+                background: flipped
+                  ? `${RARITY_COLORS[pendingCard.card.rarity]}15`
+                  : 'linear-gradient(135deg, #1a1a2e 0%, #2a2a4e 50%, #1a1a2e 100%)',
               }}
             >
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-xl">{pendingCard.card.emoji}</span>
-                <span className="text-white font-bold">{pendingCard.card.name}</span>
-              </div>
-              <p className="text-gray-300 text-sm">{pendingCard.card.description}</p>
+              {flipped ? (
+                <>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xl">{pendingCard.card.emoji}</span>
+                    <span className="text-white font-bold">{pendingCard.card.name}</span>
+                  </div>
+                  <p className="text-gray-300 text-sm">{pendingCard.card.description}</p>
+                </>
+              ) : (
+                <div className="h-16 flex items-center justify-center">
+                  <span className="text-2xl">🃏</span>
+                </div>
+              )}
             </div>
 
             <p className="text-gray-400 text-sm mb-3">卡槽已满！选择一张卡牌替换，或放弃新卡：</p>
