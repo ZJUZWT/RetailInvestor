@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { useGameStore, type PlaybackSpeed } from '../stores/gameStore';
 
 export function TradingPanel() {
@@ -16,12 +16,6 @@ export function TradingPanel() {
     setToasts(prev => [...prev, { id, message, type }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 2300);
   };
-
-  const prevCashRef = useRef(cash);
-  const prevSharesRef = useRef(shares);
-
-  useEffect(() => { prevCashRef.current = cash; }, [cash]);
-  useEffect(() => { prevSharesRef.current = shares; }, [shares]);
 
   const isTrading = phase === 'am_trading' || phase === 'pm_trading';
   if (!isTrading) return null;
