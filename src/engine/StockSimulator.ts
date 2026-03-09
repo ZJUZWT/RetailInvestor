@@ -1,32 +1,56 @@
-import type { TrendSegment, StockDataPoint } from '../types';
+import type { TrendSegment, StockDataPoint, OpeningPattern } from '../types';
 
-/** 生成一局游戏的牛熊趋势段 */
-export function generateTrendSegments(totalDays: number = 200): TrendSegment[] {
+/**
+ * 生成一局游戏的完整趋势段（历史 + 游戏期间）
+ * @param historyDays 预生成的历史天数
+ * @param gameDays 游戏期间的天数
+ * @param pattern 开局模式
+ */
+export function generateTrendSegments(
+  historyDays: number = 0,
+  gameDays: number = 200,
+  pattern?: OpeningPattern,
+): TrendSegment[] {
+  const totalDays = historyDays + gameDays;
   const segments: TrendSegment[] = [];
   let currentDay = 1;
 
   while (currentDay < totalDays) {
-    const segmentLength = 15 + Math.floor(Math.random() * 35); // 15-50天一段
+    const segmentLength = 15 + Math.floor(Math.random() * 35);
     const endDay = Math.min(currentDay + segmentLength, totalDays);
 
-    // 随机牛熊：偏向交替
     const prevBias = segments.length > 0 ? segments[segments.length - 1].dailyBias : 0;
     let dailyBias: number;
 
     if (prevBias > 0) {
-      // 上一段是牛，这段大概率转熊或震荡
-      dailyBias = (Math.random() - 0.65) * 0.02; // 偏空
+      dailyBias = (Math.random() - 0.65) * 0.02;
     } else if (prevBias < 0) {
-      // 上一段是熊，这段大概率转牛或震荡
-      dailyBias = (Math.random() - 0.35) * 0.02; // 偏多
+      dailyBias = (Math.random() - 0.35) * 0.02;
     } else {
       dailyBias = (Math.random() - 0.5) * 0.02;
     }
 
-    const volatility = 0.02 + Math.random() * 0.04; // 2%-6%基础波动
-
+    const volatility = 0.02 + Math.random() * 0.04;
     segments.push({ startDay: currentDay, endDay, dailyBias, volatility });
     currentDay = endDay + 1;
+  }
+
+  // 将开局模式模板覆盖到历史末段
+  if (pattern && historyDays > 0) {
+    const template = OPENING_TEMPLATES[pattern];
+    const templateStart = historyDays + template[0].startDay;
+    const filtered = segments.filter(s => s.endDay < templateStart);
+
+    for (const t of template) {
+      filtered.push({
+        startDay: historyDays + t.startDay,
+        endDay: historyDays + t.endDay,
+        dailyBias: t.dailyBias,
+        volatility: t.volatility,
+      });
+    }
+
+    return filtered;
   }
 
   return segments;
@@ -120,4 +144,72 @@ export function getRandomStockName(): string {
 /** 初始股价 */
 export function getInitialPrice(): number {
   return round2(8 + Math.random() * 25); // 8-33元
+}
+
+/** 开局模式的最后阶段趋势模板 */
+const OPENING_TEMPLATES: Record<OpeningPattern, TrendSegment[]> = {
+  slow_bull_pullback: [
+    { startDay: -60, endDay: -20, dailyBias: 0.006, volatility: 0.025 },
+    { startDay: -19, endDay: 0, dailyBias: -0.004, volatility: 0.035 },
+  ],
+  dark_decline_bottom: [
+    { startDay: -50, endDay: -10, dailyBias: -0.005, volatility: 0.03 },
+    { startDay: -9, endDay: 0, dailyBias: 0.001, volatility: 0.02 },
+  ],
+  sideways_consolidation: [
+    { startDay: -40, endDay: 0, dailyBias: 0.0005, volatility: 0.018 },
+  ],
+  surge_high: [
+    { startDay: -30, endDay: 0, dailyBias: 0.008, volatility: 0.04 },
+  ],
+  v_shape_rebound: [
+    { startDay: -40, endDay: -20, dailyBias: -0.008, volatility: 0.04 },
+    { startDay: -19, endDay: 0, dailyBias: 0.007, volatility: 0.035 },
+  ],
+};
+
+const ALL_PATTERNS: OpeningPattern[] = [
+  'slow_bull_pullback',
+  'dark_decline_bottom',
+  'sideways_consolidation',
+  'surge_high',
+  'v_shape_rebound',
+];
+
+/** 随机选择开局模式 */
+export function getRandomOpeningPattern(): OpeningPattern {
+  return ALL_PATTERNS[Math.floor(Math.random() * ALL_PATTERNS.length)];
+}
+
+/**
+ * 批量生成历史日K数据
+ * @param days 天数
+ * @param initialPrice 起始价格
+ * @param segments 趋势段
+ * @returns 历史日K数组
+ */
+export function generateHistoryData(
+  days: number,
+  initialPrice: number,
+  segments: TrendSegment[],
+): StockDataPoint[] {
+  const history: StockDataPoint[] = [];
+  let prevClose = initialPrice;
+
+  for (let day = 1; day <= days; day++) {
+    const trend = getTrendForDay(day, segments);
+    const am = simulateAMSession(prevClose, trend, 0);
+    const pm = simulatePMSession(prevClose, am, trend, 0);
+    const dataPoint: StockDataPoint = {
+      day,
+      open: pm.open,
+      close: pm.close,
+      high: pm.high,
+      low: pm.low,
+    };
+    history.push(dataPoint);
+    prevClose = pm.close;
+  }
+
+  return history;
 }
