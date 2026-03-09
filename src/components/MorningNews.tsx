@@ -2,13 +2,14 @@ import { useGameStore } from '../stores/gameStore';
 
 export function MorningNews() {
   const { phase, day, currentEvent } = useGameStore();
+  const historyDays = useGameStore(s => s.historyDays);
   const { advancePhase } = useGameStore(s => s.actions);
 
   if (phase !== 'morning_news') return null;
 
   return (
     <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4">
-      <h3 className="text-white font-bold mb-3">📰 晨报 - 第 {day} 天</h3>
+      <h3 className="text-white font-bold mb-3">📰 晨报 - 第 {day - historyDays} 天</h3>
 
       {currentEvent && (
         <div className="mb-4">

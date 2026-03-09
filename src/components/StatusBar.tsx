@@ -4,6 +4,7 @@ import { PHASE_NAMES } from '../types';
 export function StatusBar() {
   const { day, phase, stamina, maxStamina, cash, shares, currentPrice, goal, gameStatus, dailyExpense } =
     useGameStore();
+  const historyDays = useGameStore(s => s.historyDays);
 
   if (gameStatus !== 'playing') return null;
 
@@ -15,7 +16,7 @@ export function StatusBar() {
       <div className="max-w-6xl mx-auto flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
         <span className="text-lg font-bold text-white">散户大冒险</span>
         <span className="text-gray-400">
-          Day <span className="text-white font-mono">{day}</span>
+          Day <span className="text-white font-mono">{day - historyDays}</span>
         </span>
         <span className="bg-[#1a1a2e] px-2 py-0.5 rounded text-yellow-400 text-xs">
           {PHASE_NAMES[phase]}

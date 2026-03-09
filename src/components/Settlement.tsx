@@ -2,6 +2,7 @@ import { useGameStore } from '../stores/gameStore';
 
 export function Settlement() {
   const { phase, cash, shares, currentPrice, goal, dailyExpense, day, peakAssets } = useGameStore();
+  const historyDays = useGameStore(s => s.historyDays);
   const { advancePhase } = useGameStore(s => s.actions);
 
   if (phase !== 'settlement') return null;
@@ -11,7 +12,7 @@ export function Settlement() {
 
   return (
     <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4">
-      <h3 className="text-white font-bold mb-3">💤 今日结算 - 第 {day} 天</h3>
+      <h3 className="text-white font-bold mb-3">💤 今日结算 - 第 {day - historyDays} 天</h3>
 
       <div className="space-y-2 text-sm mb-4">
         <div className="flex justify-between text-gray-400">
