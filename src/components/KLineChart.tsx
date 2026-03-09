@@ -172,6 +172,24 @@ export function KLineChart() {
       timeScale: {
         borderColor: '#1a1a2e',
         timeVisible: false,
+        // 分时图：自定义横坐标显示真实时间
+        ...(chartView === 'intraday' ? {
+          tickMarkFormatter: (time: number) => {
+            const minute = time as number;
+            if (minute <= 120) {
+              const totalMins = 9 * 60 + 30 + minute;
+              const h = Math.floor(totalMins / 60);
+              const m = totalMins % 60;
+              return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+            } else {
+              const pmMinute = minute - 121;
+              const totalMins = 13 * 60 + pmMinute;
+              const h = Math.floor(totalMins / 60);
+              const m = totalMins % 60;
+              return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+            }
+          },
+        } : {}),
       },
       rightPriceScale: { borderColor: '#1a1a2e' },
     });
@@ -228,7 +246,11 @@ export function KLineChart() {
       }
 
       seriesRef.current = series;
-      chart.timeScale().fitContent();
+      // 固定分时图横轴范围为整个交易日 (0-240)，避免少量数据点占满屏幕
+      chart.timeScale().setVisibleRange({
+        from: 0 as unknown as UTCTimestamp,
+        to: 240 as unknown as UTCTimestamp,
+      });
     } else {
       // K线图
       const series = chart.addSeries(CandlestickSeries, {

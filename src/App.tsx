@@ -11,6 +11,7 @@ import { LunchBreak } from './components/LunchBreak';
 import { MainMenu } from './components/MainMenu';
 import { GameOver } from './components/GameOver';
 import { MessageLog } from './components/MessageLog';
+import { EventLog } from './components/EventLog';
 
 function GameScreen() {
   const { gameStatus } = useGameStore();
@@ -32,11 +33,12 @@ function GameScreen() {
             <Settlement />
           </div>
 
-          {/* 右侧：事件 + 卡牌 + 消息 */}
+          {/* 右侧：事件 + 卡牌 + 消息 + 日志 */}
           <div className="space-y-4">
             <EventDisplay />
             <CardSlots />
             <MessageLog />
+            <EventLog />
           </div>
         </div>
       </div>
