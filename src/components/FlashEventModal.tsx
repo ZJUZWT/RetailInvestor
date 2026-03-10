@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useGameStore } from '../stores/gameStore';
-import type { FlashEvent, FlashEventChoice } from '../data/flashEvents';
+import type { FlashEventChoice } from '../data/flashEvents';
 
 export function FlashEventModal() {
   const { activeFlashEvent, gameStatus } = useGameStore();

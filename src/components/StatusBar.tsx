@@ -4,8 +4,6 @@ import { getDayOfWeekLabel, minuteToTimeStr } from '../engine/CalendarSystem';
 export function StatusBar() {
   const { cash, shares, currentPrice, goal, gameStatus, vitality, calendar, playbackSpeed, job } =
     useGameStore();
-  const { setPlaybackSpeed } = useGameStore(s => s.actions);
-
   if (gameStatus !== 'playing') return null;
 
   const totalAssets = cash + shares * currentPrice;

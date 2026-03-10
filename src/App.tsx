@@ -20,7 +20,7 @@ import { OrderPanel } from './components/OrderPanel';
 import { FlashEventModal } from './components/FlashEventModal';
 
 function GameScreen() {
-  const { gameStatus, job, calendar, cards } = useGameStore();
+  const { gameStatus, job, cards } = useGameStore();
   const { toggleSlacking } = useGameStore(s => s.actions);
 
   if (gameStatus !== 'playing') return null;
