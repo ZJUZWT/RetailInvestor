@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useGameStore } from './stores/gameStore';
+import { sumCardEffects } from './engine/CardSystem';
 import { StatusBar } from './components/StatusBar';
 import { KLineChart } from './components/KLineChart';
 import { TradingPanel } from './components/TradingPanel';
@@ -15,15 +16,18 @@ import { NewsWaterfall } from './components/NewsWaterfall';
 import { Calendar } from './components/Calendar';
 import { PlayerActions } from './components/PlayerActions';
 import { JobPanel } from './components/JobPanel';
+import { OrderPanel } from './components/OrderPanel';
+import { FlashEventModal } from './components/FlashEventModal';
 
 function GameScreen() {
-  const { gameStatus, job, calendar } = useGameStore();
+  const { gameStatus, job, calendar, cards } = useGameStore();
   const { toggleSlacking } = useGameStore(s => s.actions);
 
   if (gameStatus !== 'playing') return null;
 
-  // 上班时间且不在摸鱼 → 遮盖盘面
-  const isWorkBlocked = job.employed && job.isWorkingHours && !job.isSlacking;
+  // 上班时间且不在摸鱼 → 遮盖盘面（除非有分身术卡牌）
+  const hasSkipWorkCheck = sumCardEffects(cards, 'skip_work_check') > 0;
+  const isWorkBlocked = job.employed && job.isWorkingHours && !job.isSlacking && !hasSkipWorkCheck;
 
   return (
     <div className="min-h-screen bg-[#0a0a0f]">
@@ -55,6 +59,7 @@ function GameScreen() {
             )}
             <KLineChart />
             <TradingPanel />
+            <OrderPanel />
             <PnLPanel />
           </div>
 
@@ -93,6 +98,7 @@ function App() {
       <GameScreen />
       <GameOver />
       <NewsWaterfall />
+      <FlashEventModal />
     </div>
   );
 }

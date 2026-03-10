@@ -64,7 +64,23 @@ export type CardEffectType =
   | 'sell_bonus'
   | 'expense_reduce'
   | 'stamina_bonus'
-  | 'trade_override';
+  | 'trade_override'
+  // 新增效果类型
+  | 'energy_drain_reduce'    // 精力衰减降低（百分比，如0.2=降20%）
+  | 'catch_rate_reduce'      // 被抓概率降低（百分比）
+  | 'salary_reduce'          // 工资降低（百分比，副作用）
+  | 't0_enabled'             // T+0特权
+  | 'sell_fee'               // 每次卖出额外手续费（固定金额，副作用）
+  | 'socializing_card_rate'  // 社交获卡率加成
+  | 'socializing_cost_mult'  // 社交费用倍率（副作用）
+  | 'sanity_floor'           // SAN值下限
+  | 'energy_recovery_reduce' // 精力恢复降低（百分比，副作用）
+  | 'skip_work_check'        // 上班时也能看盘
+  | 'sanity_cap_reduce'      // SAN值上限降低（固定值，副作用）
+  | 'revenue_bonus'          // 所有收益加成（百分比）
+  | 'expense_mult'           // 生活费倍率（副作用）
+  | 'lunch_energy_restore'   // 午休精力恢复（固定值）
+  ;
 
 export interface CardEffect {
   type: CardEffectType;
@@ -146,6 +162,22 @@ export interface TradeMarker {
   price: number;
   type: 'B' | 'S';
   shares: number;
+}
+
+// === 挂单系统 ===
+export type OrderType = 'limit_buy' | 'limit_sell' | 'stop_loss' | 'take_profit';
+
+export interface PendingOrder {
+  id: string;
+  type: OrderType;
+  /** 触发价格 */
+  triggerPrice: number;
+  /** 股数 */
+  shares: number;
+  /** 创建时间（游戏总分钟数） */
+  createdAt: number;
+  /** 是否已执行 */
+  executed: boolean;
 }
 
 // === 上班系统 ===

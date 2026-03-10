@@ -9,7 +9,7 @@ export function TradingPanel() {
     cash, shares, currentPrice, boughtToday, shareCostBasis,
     playbackSpeed, intradayTicks, currentTick, calendar, gameStatus, job,
   } = useGameStore();
-  const { buy, sell, setPlaybackSpeed } = useGameStore(s => s.actions);
+  const { buy, sell, setPlaybackSpeed, skipToNext } = useGameStore(s => s.actions);
 
   const [posPercent, setPosPercent] = useState(0);
   const [mode, setMode] = useState<'buy' | 'sell'>('buy');
@@ -100,15 +100,25 @@ export function TradingPanel() {
         </div>
       </div>
 
-      {/* 非交易时段提示 */}
+      {/* 非交易时段提示 + 跳过按钮 */}
       {!isTrading && (
         <div className="text-center py-4">
-          <span className="text-gray-500 text-sm">
+          <span className="text-gray-500 text-sm block mb-3">
             {marketPhase === 'pre_market' && '⏰ 盘前准备中，09:30 开盘...'}
             {marketPhase === 'lunch_break' && '🍜 午间休息，13:00 继续交易...'}
             {marketPhase === 'after_hours' && '🌙 今日已收盘，明天继续...'}
             {marketPhase === 'closed' && '📅 今天休市，享受生活吧！'}
           </span>
+          <button
+            onClick={skipToNext}
+            className="px-5 py-2 bg-blue-600/80 hover:bg-blue-600 text-white rounded-lg text-sm font-bold transition-colors"
+          >
+            ⏭ 跳过到{
+              marketPhase === 'lunch_break' ? '下午开盘'
+                : marketPhase === 'pre_market' ? '开盘'
+                : '下一节点'
+            }
+          </button>
         </div>
       )}
 
