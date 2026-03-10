@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { GameState, GamePhase, Card, OpeningPattern, MAVisible } from '../types';
+import type { GameState, GamePhase, Card, OpeningPattern, MAVisible, TradeMarker, DeathCause } from '../types';
 import type { NewsMessage, ScheduledNews } from '../types/newsTypes';
 import type { IntradayTick } from '../engine/IntradaySimulator';
 import { getRandomGoal } from '../data/goals';
@@ -35,6 +35,20 @@ import {
   checkScheduledNews,
   generateSessionBurst,
 } from '../engine/IntradayNewsEngine';
+import {
+  type VitalityState,
+  createInitialVitality,
+  tickVitality,
+  checkDeath,
+  FOODS,
+  insanityCheck,
+} from '../engine/VitalitySystem';
+import {
+  type GameCalendar,
+  getCalendar,
+  minuteToTimeStr,
+  getDayOfWeekLabel,
+} from '../engine/CalendarSystem';
 
 const SAVE_KEY = 'retail_investor_save';
 
@@ -72,6 +86,17 @@ export interface StoreState extends GameState {
   waterfallQueue: NewsMessage[];       // 待瀑布动画的消息
   intradayNewsSchedule: ScheduledNews[];  // 当前session预排新闻
   newsIdCounter: number;               // 自增ID
+
+  // 交易标记
+  tradeMarkers: TradeMarker[];          // 当日交易点位标记
+
+  // === 新系统：生命体征 + 日历 ===
+  vitality: VitalityState;
+  totalGameMinutes: number;          // 游戏总分钟数（核心时钟）
+  calendar: GameCalendar;            // 当前日历状态
+  deathCause: DeathCause | null;     // 死亡原因
+  currentTradingDay: number;         // 当前交易日序号（用于趋势查询）
+  todayIntradayGenerated: boolean;   // 当天分时数据是否已生成
 }
 
 interface GameActions {
@@ -96,6 +121,11 @@ interface GameActions {
   stopPlayback: () => void;
   setChartView: (view: StoreState['chartView']) => void;
   toggleMA: (key: keyof MAVisible) => void;
+
+  // === 新系统：生命体征 ===
+  eat: (foodId: string) => void;
+  startSleep: (hours: number) => void;
+  wakeUp: () => void;
 }
 
 // 辅助函数：将纯文本包装为系统消息
@@ -109,6 +139,9 @@ function sysMsgs(texts: string[], source?: NewsMessage['source']): NewsMessage[]
 
 function createInitialState(): Omit<StoreState, 'actions'> {
   const price = getInitialPrice();
+  // 游戏从第1天 09:00 开始（分钟540），给玩家盘前准备时间
+  const initialMinutes = 540;
+  const initialCalendar = getCalendar(initialMinutes);
   return {
     day: 0,
     phase: 'morning_news' as GamePhase,
@@ -152,6 +185,14 @@ function createInitialState(): Omit<StoreState, 'actions'> {
     waterfallQueue: [],
     intradayNewsSchedule: [],
     newsIdCounter: 1,
+    tradeMarkers: [],
+    // 新系统
+    vitality: createInitialVitality(),
+    totalGameMinutes: initialMinutes,
+    calendar: initialCalendar,
+    deathCause: null,
+    currentTradingDay: 0,
+    todayIntradayGenerated: false,
   };
 }
 
@@ -175,6 +216,10 @@ export const useGameStore = create<StoreState>((set, get) => ({
         : price;
       const startDay = historyDays + 1;
 
+      // 游戏从09:00开始（给盘前准备时间）
+      const initialMinutes = 540;
+      const initialCalendar = getCalendar(initialMinutes);
+
       set({
         ...createInitialState(),
         day: startDay,
@@ -194,10 +239,19 @@ export const useGameStore = create<StoreState>((set, get) => ({
         messages: sysMsgs([
           `欢迎来到股市！你的目标：${goal.title}（¥${goal.targetAmount.toLocaleString()}）`,
           `你选择了【${stockName}】，当前价格 ¥${lastClose}`,
+          `📅 ${initialCalendar.date} ${getDayOfWeekLabel(initialCalendar.dayOfWeek)} ${minuteToTimeStr(initialCalendar.minuteOfDay)}`,
+          '⚡ 注意管理你的精力和饥饿值，不要猝死哦！',
           '祝你好运，散户！',
         ]),
         waterfallQueue: [],
         intradayNewsSchedule: [],
+        // 新系统初始化
+        vitality: createInitialVitality(),
+        totalGameMinutes: initialMinutes,
+        calendar: initialCalendar,
+        deathCause: null,
+        currentTradingDay: 0,
+        todayIntradayGenerated: false,
       });
     },
 
@@ -213,6 +267,14 @@ export const useGameStore = create<StoreState>((set, get) => ({
         if (!state.waterfallQueue) state.waterfallQueue = [];
         if (!state.intradayNewsSchedule) state.intradayNewsSchedule = [];
         if (!state.newsIdCounter) state.newsIdCounter = _globalNewsId;
+        // 兼容旧存档：新系统字段
+        if (!state.vitality) state.vitality = createInitialVitality();
+        if (!state.totalGameMinutes) state.totalGameMinutes = 540;
+        if (!state.calendar) state.calendar = getCalendar(state.totalGameMinutes);
+        if (!state.tradeMarkers) state.tradeMarkers = [];
+        if (state.deathCause === undefined) state.deathCause = null;
+        if (!state.currentTradingDay) state.currentTradingDay = 0;
+        if (state.todayIntradayGenerated === undefined) state.todayIntradayGenerated = false;
         set({ ...state, pendingCard: null, lunchHint: null, tickTimerId: null, playbackSpeed: 1 as PlaybackSpeed });
         return true;
       } catch {
@@ -223,7 +285,12 @@ export const useGameStore = create<StoreState>((set, get) => ({
     saveGame: () => {
       const state = get();
       const { actions, pendingCard, lunchHint, tickTimerId, waterfallQueue, ...saveable } = state;
-      localStorage.setItem(SAVE_KEY, JSON.stringify(saveable));
+      // 保存时确保睡眠状态被中断
+      const saveState = {
+        ...saveable,
+        vitality: { ...saveable.vitality, isSleeping: false },
+      };
+      localStorage.setItem(SAVE_KEY, JSON.stringify(saveState));
     },
 
     // ==================== 盘中控制 ====================
@@ -293,7 +360,6 @@ export const useGameStore = create<StoreState>((set, get) => ({
           currentTick: AM_END_TICK,
           currentPrice: amClosePrice,
           amClose: amClosePrice,
-          stamina: state.stamina - 1,
           chartView: 'intraday',
           lunchHint: { direction: hintDirection, reliable: isReliable },
           messages: [
@@ -328,7 +394,7 @@ export const useGameStore = create<StoreState>((set, get) => ({
           chartView: 'intraday',
           messages: [
             sysMsg(`📊 收盘价: ¥${closePrice.toFixed(2)} (${Number(changePercent) >= 0 ? '+' : ''}${changePercent}%)`, 'market_index', 'important'),
-            sysMsg(`⚡ 盘后活动时间 | 剩余体力: ${state.stamina}`),
+            sysMsg(`⚡${Math.round(state.vitality.energy)} 🍚${Math.round(state.vitality.hunger)} 🧠${Math.round(state.vitality.sanity)}`),
           ],
           intradayNewsSchedule: [],
         });
@@ -355,16 +421,49 @@ export const useGameStore = create<StoreState>((set, get) => ({
         // 快速播放（speed>=3）时跳过瀑布动画
         const skipWaterfall = state.playbackSpeed >= 3;
 
+        // 推进游戏时间（每个分时tick = 1分钟）并更新生命体征
+        const newTotalMin = state.totalGameMinutes + 1;
+        const newCalendar = getCalendar(newTotalMin);
+
+        // 计算持仓涨跌幅
+        const holdingChangePercent = state.shares > 0 && state.shareCostBasis > 0
+          ? ((tick.price - state.shareCostBasis) / state.shareCostBasis * 100)
+          : 0;
+
+        const vitalityUpdates = tickVitality(state.vitality, 1, {
+          isSleeping: state.vitality.isSleeping,
+          holdingChangePercent,
+          isWatching: true, // 交易时段=看盘
+          sleepElapsedHours: 0,
+        });
+
+        const newVitality = { ...state.vitality, ...vitalityUpdates };
+
+        // 检查死亡
+        const death = checkDeath(newVitality);
+
         set({
           currentTick: nextTick,
           currentPrice: tick.price,
           intradayNewsSchedule: updatedSchedule,
           newsIdCounter: nextId,
+          totalGameMinutes: newTotalMin,
+          calendar: newCalendar,
+          vitality: newVitality,
+          ...(death ? {
+            gameStatus: 'lost' as const,
+            deathCause: death,
+          } : {}),
           ...(newNews.length > 0 ? {
             messages: [...state.messages, ...newNews],
             waterfallQueue: skipWaterfall ? state.waterfallQueue : [...state.waterfallQueue, ...newNews],
           } : {}),
         });
+
+        // 如果死亡了，停止播放
+        if (death) {
+          get().actions.stopPlayback();
+        }
       }
     },
 
@@ -478,6 +577,7 @@ export const useGameStore = create<StoreState>((set, get) => ({
           currentTick: 0,
           playbackSpeed: 1 as PlaybackSpeed,
           chartView: 'intraday',
+          tradeMarkers: [],
           messages: [...openMsgs, ...burstMsgs],
           waterfallQueue: burstMsgs,
           intradayNewsSchedule: amSchedule,
@@ -525,6 +625,19 @@ export const useGameStore = create<StoreState>((set, get) => ({
 
     buy: (shares: number) => {
       const state = get();
+      if (state.vitality.isSleeping) {
+        set({ messages: [sysMsg('💤 你在睡觉，无法交易')] });
+        return;
+      }
+      // SAN失控检查
+      if (state.vitality.isInsane) {
+        const check = insanityCheck();
+        if (check?.blocked) {
+          set({ messages: [sysMsg(check.message)] });
+          return;
+        }
+        if (check) set({ messages: [...state.messages, sysMsg(check.message)] });
+      }
       const cost = shares * state.currentPrice;
       if (cost > state.cash || shares <= 0) return;
 
@@ -536,12 +649,26 @@ export const useGameStore = create<StoreState>((set, get) => ({
         shares: totalShares,
         shareCostBasis: Math.round((totalCost / totalShares) * 100) / 100,
         boughtToday: true,
+        tradeMarkers: [...state.tradeMarkers, { tick: state.currentTick, price: state.currentPrice, type: 'B' as const, shares }],
         messages: [sysMsg(`✅ 买入 ${shares} 股 @ ¥${state.currentPrice.toFixed(2)}，花费 ¥${cost.toFixed(2)}`, 'trade')],
       });
     },
 
     sell: (shares: number) => {
       const state = get();
+      if (state.vitality.isSleeping) {
+        set({ messages: [sysMsg('💤 你在睡觉，无法交易')] });
+        return;
+      }
+      // SAN失控检查
+      if (state.vitality.isInsane) {
+        const check = insanityCheck();
+        if (check?.blocked) {
+          set({ messages: [sysMsg(check.message)] });
+          return;
+        }
+        if (check) set({ messages: [...state.messages, sysMsg(check.message)] });
+      }
       if (shares > state.shares || shares <= 0) return;
       if (state.boughtToday) {
         set({ messages: [sysMsg('❌ T+1规则：今日买入的股票明天才能卖出！', 'system', 'important')] });
@@ -558,6 +685,7 @@ export const useGameStore = create<StoreState>((set, get) => ({
         cash: Math.round((state.cash + total) * 100) / 100,
         shares: remainingShares,
         shareCostBasis: remainingShares > 0 ? state.shareCostBasis : 0,
+        tradeMarkers: [...state.tradeMarkers, { tick: state.currentTick, price: state.currentPrice, type: 'S' as const, shares }],
         messages: [
           sysMsg(`✅ 卖出 ${shares} 股 @ ¥${state.currentPrice.toFixed(2)}，获得 ¥${total.toFixed(2)}${bonus > 0 ? ` (含加成 +¥${bonus.toFixed(2)})` : ''}`, 'trade'),
         ],
@@ -656,6 +784,82 @@ export const useGameStore = create<StoreState>((set, get) => ({
     getTotalAssets: () => {
       const s = get();
       return Math.round((s.cash + s.shares * s.currentPrice) * 100) / 100;
+    },
+
+    // ==================== 生命体征系统 ====================
+
+    eat: (foodId: string) => {
+      const state = get();
+      const food = FOODS.find(f => f.id === foodId);
+      if (!food) return;
+      if (state.cash < food.cost) {
+        set({ messages: [sysMsg(`❌ 钱不够！${food.name}需要¥${food.cost}`)] });
+        return;
+      }
+      if (state.vitality.isSleeping) {
+        set({ messages: [sysMsg('❌ 睡觉中不能吃东西...')] });
+        return;
+      }
+
+      const newHunger = Math.min(state.vitality.maxHunger, state.vitality.hunger + food.hungerRestore);
+      const newSanity = Math.min(state.vitality.maxSanity, state.vitality.sanity + food.sanityRestore);
+      set({
+        cash: Math.round((state.cash - food.cost) * 100) / 100,
+        vitality: {
+          ...state.vitality,
+          hunger: newHunger,
+          sanity: newSanity,
+          hoursWithoutFood: 0,
+        },
+        messages: [sysMsg(`${food.emoji} 吃了${food.name}！饱腹+${food.hungerRestore} (¥${food.cost})${food.sanityRestore > 0 ? ` SAN+${food.sanityRestore}` : ''}`)],
+      });
+    },
+
+    startSleep: (hours: number) => {
+      const state = get();
+      if (state.vitality.isSleeping) return;
+      if (hours <= 0 || hours > 12) return;
+
+      // 睡觉时暂停玩家操作
+      set({
+        vitality: {
+          ...state.vitality,
+          isSleeping: true,
+          sleepStartMinute: state.totalGameMinutes,
+          sleepHours: hours,
+        },
+        messages: [sysMsg(`😴 开始睡觉，计划睡${hours}小时... 💤`)],
+      });
+
+      // 不暂停分时图播放，但切换到加速模式
+      if (state.phase === 'am_trading' || state.phase === 'pm_trading') {
+        // 交易时段睡觉：加速到3x
+        get().actions.setPlaybackSpeed(3);
+      }
+    },
+
+    wakeUp: () => {
+      const state = get();
+      if (!state.vitality.isSleeping) return;
+
+      const sleepMinutes = state.totalGameMinutes - state.vitality.sleepStartMinute;
+      const actualHours = sleepMinutes / 60;
+
+      set({
+        vitality: {
+          ...state.vitality,
+          isSleeping: false,
+          sleepStartMinute: 0,
+          sleepHours: 0,
+          hoursWithoutSleep: 0,
+        },
+        messages: [sysMsg(`☀️ 醒来了！睡了${actualHours.toFixed(1)}小时，精力: ${Math.round(state.vitality.energy)}/100`)],
+      });
+
+      // 恢复正常播放速度
+      if (state.phase === 'am_trading' || state.phase === 'pm_trading') {
+        get().actions.setPlaybackSpeed(1);
+      }
     },
   },
 }));

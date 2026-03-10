@@ -29,6 +29,9 @@ export const PHASE_ORDER: GamePhase[] = [
 
 export type GameStatus = 'menu' | 'playing' | 'won' | 'lost';
 
+// === 死亡原因 ===
+export type DeathCause = 'bankruptcy' | 'starved' | 'exhaustion' | 'insanity';
+
 // === 股票数据 ===
 export interface StockDataPoint {
   day: number;
@@ -162,6 +165,14 @@ export interface ActivityResult {
   staminaChange?: number;
   card?: Card;
   infoHint?: { direction: 'up' | 'down'; reliable: boolean };
+}
+
+// === 交易标记 ===
+export interface TradeMarker {
+  tick: number;
+  price: number;
+  type: 'B' | 'S';
+  shares: number;
 }
 
 // === 游戏状态 ===

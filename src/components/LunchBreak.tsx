@@ -1,9 +1,26 @@
+import { useEffect, useRef } from 'react';
 import { useGameStore } from '../stores/gameStore';
 import { NEWS_SOURCE_CONFIG } from '../types/newsTypes';
 
 export function LunchBreak() {
   const { phase, lunchHint, intradayTicks, stockName, messages } = useGameStore();
   const { advancePhase, setChartView } = useGameStore(s => s.actions);
+  const autoAdvancedRef = useRef(false);
+
+  // 午休5秒后自动进入下午盘
+  useEffect(() => {
+    if (phase !== 'lunch_break') {
+      autoAdvancedRef.current = false;
+      return;
+    }
+    if (autoAdvancedRef.current) return;
+    const timer = setTimeout(() => {
+      autoAdvancedRef.current = true;
+      setChartView('intraday');
+      advancePhase();
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [phase, advancePhase, setChartView]);
 
   if (phase !== 'lunch_break') return null;
 
@@ -14,7 +31,7 @@ export function LunchBreak() {
 
   return (
     <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4 animate-fadeIn">
-      <h3 className="text-white font-bold mb-3">🍜 午间休息 (11:30 - 13:00)</h3>
+      <h3 className="text-white font-bold mb-3">🍜 午间休息</h3>
 
       {/* 上午盘回顾 */}
       <div className="bg-[#1a1a2e] rounded p-3 mb-3 border border-gray-700">
@@ -76,14 +93,10 @@ export function LunchBreak() {
         ))}
       </div>
 
-      <p className="text-xs text-gray-600 mb-3">⚡ 消耗1点体力浏览午间消息</p>
-
-      <button
-        onClick={() => { setChartView('intraday'); advancePhase(); }}
-        className="w-full py-2 bg-red-600 hover:bg-red-700 text-white rounded font-bold transition-colors"
-      >
-        下午开盘 📈
-      </button>
+      {/* 自动开盘倒计时提示 */}
+      <div className="text-center py-2">
+        <span className="text-yellow-400 text-sm animate-pulse">🍜 午休中，下午盘即将开始...</span>
+      </div>
     </div>
   );
 }

@@ -1,10 +1,12 @@
+import { useEffect, useRef } from 'react';
 import { useGameStore } from '../stores/gameStore';
 import { useCountUp } from '../hooks/useCountUp';
 
 export function Settlement() {
-  const { phase, cash, shares, currentPrice, goal, dailyExpense, day, peakAssets } = useGameStore();
+  const { phase, cash, shares, currentPrice, goal, dailyExpense, day, peakAssets, gameStatus } = useGameStore();
   const historyDays = useGameStore(s => s.historyDays);
   const { advancePhase } = useGameStore(s => s.actions);
+  const autoAdvancedRef = useRef(false);
 
   const totalAssets = cash + shares * currentPrice;
   const progress = (totalAssets / goal.targetAmount * 100).toFixed(1);
@@ -16,11 +18,27 @@ export function Settlement() {
   const animatedPeak = useCountUp(peakAssets, 1200, 2);
   const animatedProgress = useCountUp(parseFloat(progress), 1200, 1);
 
+  // 结算展示4秒后自动进入下一天
+  useEffect(() => {
+    if (phase !== 'settlement') {
+      autoAdvancedRef.current = false;
+      return;
+    }
+    // 如果游戏已经结束（赢/输），不自动推进
+    if (gameStatus !== 'playing') return;
+    if (autoAdvancedRef.current) return;
+    const timer = setTimeout(() => {
+      autoAdvancedRef.current = true;
+      advancePhase();
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [phase, gameStatus, advancePhase]);
+
   if (phase !== 'settlement') return null;
 
   return (
     <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4 animate-fadeIn">
-      <h3 className="text-white font-bold mb-3">💤 今日结算 - 第 {day - historyDays} 天</h3>
+      <h3 className="text-white font-bold mb-3">📊 今日结算 - 第 {day - historyDays} 天</h3>
 
       <div className="space-y-2 text-sm mb-4">
         <div className="flex justify-between text-gray-400">
@@ -56,12 +74,12 @@ export function Settlement() {
         </div>
       </div>
 
-      <button
-        onClick={advancePhase}
-        className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-bold transition-colors"
-      >
-        进入下一天 →
-      </button>
+      {/* 自动进入下一天提示 */}
+      {gameStatus === 'playing' && (
+        <div className="text-center py-2">
+          <span className="text-indigo-400 text-sm animate-pulse">🌙 夜幕降临，新的一天即将到来...</span>
+        </div>
+      )}
     </div>
   );
 }

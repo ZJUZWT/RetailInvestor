@@ -14,6 +14,8 @@ import { GameOver } from './components/GameOver';
 import { MessageLog } from './components/MessageLog';
 import { EventLog } from './components/EventLog';
 import { NewsWaterfall } from './components/NewsWaterfall';
+import { Calendar } from './components/Calendar';
+import { PlayerActions } from './components/PlayerActions';
 
 function GameScreen() {
   const { gameStatus } = useGameStore();
@@ -35,8 +37,10 @@ function GameScreen() {
             <Settlement />
           </div>
 
-          {/* 右侧：事件 + 卡牌 + 消息 + 日志 */}
+          {/* 右侧：日历 + 角色操作 + 事件 + 卡牌 + 消息 */}
           <div className="space-y-4">
+            <Calendar />
+            <PlayerActions />
             <EventDisplay />
             <CardSlots />
             <MessageLog />

@@ -1,16 +1,32 @@
+import { useEffect, useRef } from 'react';
 import { useGameStore } from '../stores/gameStore';
 import { ACTIVITIES } from '../data/activities';
 
 export function ActivityPanel() {
   const { phase, stamina, maxStamina, activitiesDoneToday } = useGameStore();
   const { doActivity, advancePhase } = useGameStore(s => s.actions);
+  const autoAdvancedRef = useRef(false);
+
+  // 盘后活动8秒后自动进入结算（给玩家时间做活动）
+  useEffect(() => {
+    if (phase !== 'after_hours') {
+      autoAdvancedRef.current = false;
+      return;
+    }
+    if (autoAdvancedRef.current) return;
+    const timer = setTimeout(() => {
+      autoAdvancedRef.current = true;
+      advancePhase();
+    }, 8000);
+    return () => clearTimeout(timer);
+  }, [phase, advancePhase]);
 
   if (phase !== 'after_hours') return null;
 
   return (
     <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4 animate-fadeIn">
       <h3 className="text-white font-bold mb-3">
-        🌙 盘后活动 <span className="text-yellow-400 text-sm font-normal">⚡ {stamina}/{maxStamina}</span>
+        🌙 盘后时间 <span className="text-yellow-400 text-sm font-normal">⚡ {stamina}/{maxStamina}</span>
       </h3>
 
       <div className="space-y-2 mb-4">
@@ -44,12 +60,10 @@ export function ActivityPanel() {
         })}
       </div>
 
-      <button
-        onClick={advancePhase}
-        className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-bold transition-colors"
-      >
-        😴 睡觉休息，进入结算 →
-      </button>
+      {/* 自动结算倒计时提示 */}
+      <div className="text-center py-2">
+        <span className="text-gray-400 text-sm animate-pulse">🌙 做些盘后活动吧，时间在流逝...</span>
+      </div>
     </div>
   );
 }

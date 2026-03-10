@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useGameStore } from '../stores/gameStore';
 import { RARITY_COLORS } from '../types';
 
@@ -5,6 +6,21 @@ export function MorningNews() {
   const { phase, day, currentEvent } = useGameStore();
   const historyDays = useGameStore(s => s.historyDays);
   const { advancePhase } = useGameStore(s => s.actions);
+  const autoAdvancedRef = useRef(false);
+
+  // 晨报展示3秒后自动进入交易
+  useEffect(() => {
+    if (phase !== 'morning_news') {
+      autoAdvancedRef.current = false;
+      return;
+    }
+    if (autoAdvancedRef.current) return;
+    const timer = setTimeout(() => {
+      autoAdvancedRef.current = true;
+      advancePhase();
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [phase, advancePhase]);
 
   if (phase !== 'morning_news') return null;
 
@@ -51,12 +67,10 @@ export function MorningNews() {
         </div>
       )}
 
-      <button
-        onClick={advancePhase}
-        className="w-full py-2 bg-red-600 hover:bg-red-700 text-white rounded font-bold transition-colors"
-      >
-        开盘！📈
-      </button>
+      {/* 自动开盘倒计时提示，替代手动按钮 */}
+      <div className="text-center py-2">
+        <span className="text-gray-400 text-sm animate-pulse">⏳ 即将开盘...</span>
+      </div>
     </div>
   );
 }

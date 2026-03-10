@@ -20,6 +20,10 @@ export function TradingPanel() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 2300);
   };
 
+  const setQuickPercent = useCallback((pct: number) => {
+    setPosPercent(pct);
+  }, []);
+
   const isTrading = phase === 'am_trading' || phase === 'pm_trading';
   if (!isTrading) return null;
 
@@ -31,10 +35,6 @@ export function TradingPanel() {
   const baseShares = mode === 'buy' ? maxBuyShares : shares;
   const shareAmount = Math.floor(baseShares * posPercent / 100 / 100) * 100;
   const cost = shareAmount * currentPrice;
-
-  const setQuickPercent = useCallback((pct: number) => {
-    setPosPercent(pct);
-  }, []);
 
   const handleBuy = () => {
     if (shareAmount > 0 && shareAmount <= maxBuyShares) {
@@ -74,7 +74,7 @@ export function TradingPanel() {
     <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-white font-bold">
-          {phase === 'am_trading' ? '📈 上午盘' : '📈 下午盘'}
+          📈 交易中
           <span className="text-yellow-400 font-mono text-sm ml-2">{timeLabel}</span>
         </h3>
 

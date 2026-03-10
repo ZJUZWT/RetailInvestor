@@ -1,5 +1,5 @@
 import { useEffect, useRef, useMemo } from 'react';
-import { createChart, LineSeries, CandlestickSeries, type IChartApi, type ISeriesApi, type UTCTimestamp } from 'lightweight-charts';
+import { createChart, LineSeries, CandlestickSeries, createSeriesMarkers, type IChartApi, type ISeriesApi, type UTCTimestamp } from 'lightweight-charts';
 import { useGameStore, type StoreState } from '../stores/gameStore';
 
 /** 计算移动平均线 */
@@ -42,6 +42,7 @@ export function KLineChart() {
   } = useGameStore();
   const maVisible = useGameStore(s => s.maVisible);
   const recentIntradayHistory = useGameStore(s => s.recentIntradayHistory);
+  const tradeMarkers = useGameStore(s => s.tradeMarkers);
   const { setChartView, toggleMA } = useGameStore(s => s.actions);
 
   const isTrading = phase === 'am_trading' || phase === 'pm_trading';
@@ -214,6 +215,15 @@ export function KLineChart() {
         priceLineVisible: true,
         lastValueVisible: true,
         crosshairMarkerVisible: true,
+        priceFormat: {
+          type: 'custom',
+          formatter: (price: number) => {
+            if (todayOpen <= 0) return price.toFixed(2);
+            const pct = ((price - todayOpen) / todayOpen * 100);
+            const sign = pct >= 0 ? '+' : '';
+            return `${price.toFixed(2)}  ${sign}${pct.toFixed(2)}%`;
+          },
+        },
       });
 
       if (intradayData.length > 0) {
@@ -256,6 +266,21 @@ export function KLineChart() {
         } catch {
           chart.timeScale().fitContent();
         }
+      }
+
+      // 绘制交易标记
+      if (tradeMarkers.length > 0) {
+        const markers = tradeMarkers
+          .filter(m => m.tick <= currentTick)
+          .sort((a, b) => a.tick - b.tick)
+          .map(m => ({
+            time: m.tick as unknown as UTCTimestamp,
+            position: (m.type === 'B' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
+            color: m.type === 'B' ? '#ef4444' : '#22c55e',
+            shape: (m.type === 'B' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
+            text: `${m.type} ${m.shares}`,
+          }));
+        createSeriesMarkers(series, markers);
       }
     } else {
       // K线图
@@ -305,7 +330,7 @@ export function KLineChart() {
       chartApiRef.current = null;
       seriesRef.current = null;
     };
-  }, [chartView, chartData, stockHistory.length, maVisible, maData, avgPriceData, fiveDayIntradayData]); // 重建条件
+  }, [chartView, chartData, stockHistory.length, maVisible, maData, avgPriceData, fiveDayIntradayData, tradeMarkers]); // 重建条件
 
   // 分时图实时更新（不重建，只追加数据）
   useEffect(() => {
