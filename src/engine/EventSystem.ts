@@ -166,6 +166,29 @@ export function executeActivity(
         staminaChange: 1,
       };
 
+    case 'find_job': {
+      // 找工作结果由 gameStore 的 doActivity 特殊处理
+      // 这里只返回基础消息
+      const success = Math.random() < 0.5; // 50%成功率
+      if (success) {
+        return {
+          message: '__JOB_FOUND__', // 特殊标记，让 gameStore 处理
+        };
+      } else {
+        const failMsgs = [
+          '投了十几份简历，一个回复都没有...',
+          '面试官问你为什么离职，你说想专心炒股，当场被拒',
+          '面试到最后一轮被刷了，太惨了',
+          'HR说"我们会通知你"，基本凉了',
+          '面试时手机弹出股票通知，面试官表情微妙...',
+        ];
+        return {
+          message: failMsgs[Math.floor(Math.random() * failMsgs.length)],
+          cashChange: -(50 + Math.floor(Math.random() * 100)), // 面试交通费
+        };
+      }
+    }
+
     default:
       return { message: '什么也没做。' };
   }

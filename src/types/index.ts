@@ -1,32 +1,6 @@
 import type { NewsMessage } from './newsTypes';
 
-// === 游戏阶段 ===
-export type GamePhase =
-  | 'morning_news'
-  | 'am_trading'
-  | 'lunch_break'
-  | 'pm_trading'
-  | 'after_hours'
-  | 'settlement';
-
-export const PHASE_NAMES: Record<GamePhase, string> = {
-  morning_news: '晨报',
-  am_trading: '上午交易',
-  lunch_break: '午间休息',
-  pm_trading: '下午交易',
-  after_hours: '盘后活动',
-  settlement: '今日结算',
-};
-
-export const PHASE_ORDER: GamePhase[] = [
-  'morning_news',
-  'am_trading',
-  'lunch_break',
-  'pm_trading',
-  'after_hours',
-  'settlement',
-];
-
+// === 游戏状态（不再有 phase 阶段） ===
 export type GameStatus = 'menu' | 'playing' | 'won' | 'lost';
 
 // === 死亡原因 ===
@@ -81,7 +55,6 @@ export interface GameEvent {
   rarity: Rarity;
   effects: EventEffect[];
   chainNext?: string[];
-  phase?: GamePhase;
 }
 
 // === 卡牌系统 ===
@@ -123,7 +96,7 @@ export interface Activity {
   id: string;
   name: string;
   emoji: string;
-  staminaCost: number;
+  energyCost: number;  // 消耗精力值（vitality.energy）
   description: string;
 }
 
@@ -175,10 +148,45 @@ export interface TradeMarker {
   shares: number;
 }
 
-// === 游戏状态 ===
+// === 上班系统 ===
+export interface JobState {
+  /** 是否有工作 */
+  employed: boolean;
+  /** 日薪 */
+  dailySalary: number;
+  /** 工作名称 */
+  jobTitle: string;
+  /** 是否正在摸鱼（开了才能看盘/交易） */
+  isSlacking: boolean;
+  /** 今天摸鱼被抓次数 */
+  caughtToday: number;
+  /** 累计被抓次数 */
+  totalCaught: number;
+  /** 每次被抓罚款 */
+  catchPenalty: number;
+  /** 带薪拉屎：今天是否已使用 */
+  toiletUsedToday: boolean;
+  /** 带薪拉屎：是否正在进行中 */
+  isOnToilet: boolean;
+  /** 带薪拉屎开始时的游戏总分钟数 */
+  toiletStartMinute: number;
+  /** 带薪拉屎最大时长(分钟) */
+  toiletMaxMinutes: number;
+  /** 今日是否已发工资 */
+  paidToday: boolean;
+  /** 是否在上班时间 (09:00-18:00 工作日) */
+  isWorkingHours: boolean;
+  /** 今日工作进度（0-100），不摸鱼时每分钟增长 */
+  workProgress: number;
+  /** 今日上班总分钟数（用于计算进度上限 = 上班时长） */
+  workMinutesToday: number;
+  /** 今日摸鱼分钟数（不算入工作进度） */
+  slackMinutesToday: number;
+}
+
+// === 游戏状态（不再有 phase 字段） ===
 export interface GameState {
   day: number;
-  phase: GamePhase;
   gameStatus: GameStatus;
 
   cash: number;
@@ -194,8 +202,8 @@ export interface GameState {
   stockHistory: StockDataPoint[];
   trendSegments: TrendSegment[];
   stockName: string;
-  historyDays: number;            // 历史预生成天数（250）
-  openingPattern: OpeningPattern; // 本局开局模式
+  historyDays: number;
+  openingPattern: OpeningPattern;
 
   boughtToday: boolean;
   todayOpen: number;
@@ -209,8 +217,11 @@ export interface GameState {
 
   messages: NewsMessage[];
 
-  // 盘后活动追踪
+  // 活动追踪
   activitiesDoneToday: string[];
+
+  // 上班系统
+  job: JobState;
 
   // 统计
   peakAssets: number;

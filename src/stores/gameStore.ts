@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { GameState, GamePhase, Card, OpeningPattern, MAVisible, TradeMarker, DeathCause } from '../types';
+import type { GameState, Card, OpeningPattern, MAVisible, TradeMarker, DeathCause, JobState } from '../types';
 import type { NewsMessage, ScheduledNews } from '../types/newsTypes';
 import type { IntradayTick } from '../engine/IntradaySimulator';
 import { getRandomGoal } from '../data/goals';
@@ -14,8 +14,6 @@ import {
 import {
   generateIntradayTicks,
   intradayToOHLC,
-  AM_END_TICK,
-  PM_START_TICK,
   TOTAL_TICKS,
 } from '../engine/IntradaySimulator';
 import {
@@ -30,6 +28,7 @@ import {
   executeActivity,
 } from '../engine/EventSystem';
 import { addCard, replaceCard, sumCardEffects } from '../engine/CardSystem';
+import { ACTIVITIES as ACTIVITIES_DATA } from '../data/activities';
 import {
   scheduleSessionNews,
   checkScheduledNews,
@@ -45,19 +44,55 @@ import {
 } from '../engine/VitalitySystem';
 import {
   type GameCalendar,
+  type MarketPhase,
   getCalendar,
   minuteToTimeStr,
   getDayOfWeekLabel,
+  gameMinuteToTick,
 } from '../engine/CalendarSystem';
 
 const SAVE_KEY = 'retail_investor_save';
 
+// === 上班系统常量 ===
+const JOB_TITLES = ['程序员', '运营专员', '产品经理', '测试工程师', '设计师', '财务会计', '行政文员', '销售代表'];
+const JOB_SALARY_RANGE = { min: 250, max: 500 }; // 日薪范围
+const CATCH_PENALTY = 500; // 被抓一次罚款
+const SLACKING_CATCH_RATE = 0.015; // 摸鱼每分钟被抓概率 (~1.5%)
+const TOILET_MAX_MINUTES = 30; // 带薪拉屎最大时长
+const WORK_START_MINUTE = 540; // 09:00
+const WORK_END_MINUTE = 1080; // 18:00
+
+const WORK_TOTAL_MINUTES = WORK_END_MINUTE - WORK_START_MINUTE; // 540分钟 = 9小时
+
+function createInitialJob(): JobState {
+  const title = JOB_TITLES[Math.floor(Math.random() * JOB_TITLES.length)];
+  const salary = JOB_SALARY_RANGE.min + Math.floor(Math.random() * (JOB_SALARY_RANGE.max - JOB_SALARY_RANGE.min));
+  return {
+    employed: true,
+    dailySalary: salary,
+    jobTitle: title,
+    isSlacking: false,
+    caughtToday: 0,
+    totalCaught: 0,
+    catchPenalty: CATCH_PENALTY,
+    toiletUsedToday: false,
+    isOnToilet: false,
+    toiletStartMinute: 0,
+    toiletMaxMinutes: TOILET_MAX_MINUTES,
+    paidToday: false,
+    isWorkingHours: false,
+    workProgress: 0,
+    workMinutesToday: 0,
+    slackMinutesToday: 0,
+  };
+}
+
 export type PlaybackSpeed = 0 | 1 | 2 | 3; // 0=暂停, 1=正常, 2=快进, 3=超快
 
-// 每个speed对应的ms/tick间隔
+// 每个speed对应的ms/tick间隔（每tick = 1游戏分钟）
 const SPEED_INTERVALS: Record<PlaybackSpeed, number> = {
   0: Infinity, // 暂停
-  1: 500,      // 正常: ~2分钟/半天
+  1: 500,      // 正常
   2: 200,      // 快进
   3: 80,       // 超快
 };
@@ -78,57 +113,71 @@ export interface StoreState extends GameState {
   currentTick: number;                // 当前播放到第几个tick
   playbackSpeed: PlaybackSpeed;       // 播放速度
   tickTimerId: number | null;         // setInterval id
-  chartView: 'intraday' | 'daily' | 'weekly' | 'monthly' | '5day'; // K线视图
+  chartView: 'intraday' | 'daily' | 'weekly' | 'monthly' | '5day';
   recentIntradayHistory: IntradayTick[][]; // 最近5天分时数据
-  maVisible: MAVisible;                    // 均线显示开关
+  maVisible: MAVisible;
 
   // 消息瀑布系统
-  waterfallQueue: NewsMessage[];       // 待瀑布动画的消息
-  intradayNewsSchedule: ScheduledNews[];  // 当前session预排新闻
-  newsIdCounter: number;               // 自增ID
+  waterfallQueue: NewsMessage[];
+  intradayNewsSchedule: ScheduledNews[];
+  newsIdCounter: number;
 
   // 交易标记
-  tradeMarkers: TradeMarker[];          // 当日交易点位标记
+  tradeMarkers: TradeMarker[];
 
-  // === 新系统：生命体征 + 日历 ===
+  // === 核心时间系统 ===
   vitality: VitalityState;
   totalGameMinutes: number;          // 游戏总分钟数（核心时钟）
   calendar: GameCalendar;            // 当前日历状态
-  deathCause: DeathCause | null;     // 死亡原因
-  currentTradingDay: number;         // 当前交易日序号（用于趋势查询）
+  deathCause: DeathCause | null;
+  currentTradingDay: number;         // 当前交易日序号
   todayIntradayGenerated: boolean;   // 当天分时数据是否已生成
+  todaySettled: boolean;             // 当天是否已结算
+  lastMarketPhase: MarketPhase;      // 上一个tick的市场阶段（用于检测转换）
+
+  // 信息瀑布：当天已推送的事件类型（避免重复）
+  todayNewsPushed: {
+    morningNews: boolean;
+    openBurst: boolean;
+    lunchNews: boolean;
+    pmBurst: boolean;
+    closeNews: boolean;
+  };
 }
 
 interface GameActions {
   newGame: () => void;
   loadGame: () => boolean;
   saveGame: () => void;
-  advancePhase: () => void;
   buy: (shares: number) => void;
   sell: (shares: number) => void;
   doActivity: (activityId: string) => void;
-  finishAfterHours: () => void;
   replaceCardAt: (index: number, newCard: Card) => void;
   dismissPendingCard: () => void;
   addMessage: (msg: string) => void;
   getTotalAssets: () => number;
   dismissWaterfallMessage: (id: number) => void;
 
-  // 盘中控制
+  // 时间控制
   setPlaybackSpeed: (speed: PlaybackSpeed) => void;
-  tickForward: () => void;
+  globalTick: () => void;
   startPlayback: () => void;
   stopPlayback: () => void;
   setChartView: (view: StoreState['chartView']) => void;
   toggleMA: (key: keyof MAVisible) => void;
 
-  // === 新系统：生命体征 ===
+  // 生命体征
   eat: (foodId: string) => void;
   startSleep: (hours: number) => void;
   wakeUp: () => void;
+
+  // 上班系统
+  toggleSlacking: () => void;     // 开关摸鱼
+  startToilet: () => void;        // 开始带薪拉屎
+  quitJob: () => void;            // 离职
 }
 
-// 辅助函数：将纯文本包装为系统消息
+// 辅助函数
 let _globalNewsId = 1;
 function sysMsg(text: string, source: NewsMessage['source'] = 'system', priority: NewsMessage['priority'] = 'normal'): NewsMessage {
   return { id: _globalNewsId++, text, source, priority, timestamp: Date.now() };
@@ -139,14 +188,13 @@ function sysMsgs(texts: string[], source?: NewsMessage['source']): NewsMessage[]
 
 function createInitialState(): Omit<StoreState, 'actions'> {
   const price = getInitialPrice();
-  // 游戏从第1天 09:00 开始（分钟540），给玩家盘前准备时间
-  const initialMinutes = 540;
+  // 游戏从第1天 08:00 开始
+  const initialMinutes = 480;
   const initialCalendar = getCalendar(initialMinutes);
   return {
     day: 0,
-    phase: 'morning_news' as GamePhase,
     gameStatus: 'menu',
-    cash: 30000,
+    cash: 10000,
     shares: 0,
     shareCostBasis: 0,
     stamina: 3,
@@ -167,7 +215,8 @@ function createInitialState(): Omit<StoreState, 'actions'> {
     eventLog: [],
     messages: [],
     activitiesDoneToday: [],
-    peakAssets: 30000,
+    job: createInitialJob(),
+    peakAssets: 10000,
     totalTradingDays: 0,
     pendingCard: null,
     lunchHint: null,
@@ -186,13 +235,22 @@ function createInitialState(): Omit<StoreState, 'actions'> {
     intradayNewsSchedule: [],
     newsIdCounter: 1,
     tradeMarkers: [],
-    // 新系统
+    // 核心时间系统
     vitality: createInitialVitality(),
     totalGameMinutes: initialMinutes,
     calendar: initialCalendar,
     deathCause: null,
     currentTradingDay: 0,
     todayIntradayGenerated: false,
+    todaySettled: false,
+    lastMarketPhase: initialCalendar.marketPhase,
+    todayNewsPushed: {
+      morningNews: false,
+      openBurst: false,
+      lunchNews: false,
+      pmBurst: false,
+      closeNews: false,
+    },
   };
 }
 
@@ -209,21 +267,21 @@ export const useGameStore = create<StoreState>((set, get) => ({
       const segments = generateTrendSegments(historyDays, 200, pattern);
       const stockName = getRandomStockName();
 
-      // 批量生成历史日K
       const historyData = generateHistoryData(historyDays, price, segments);
       const lastClose = historyData.length > 0
         ? historyData[historyData.length - 1].close
         : price;
       const startDay = historyDays + 1;
 
-      // 游戏从09:00开始（给盘前准备时间）
-      const initialMinutes = 540;
+      // 游戏从08:00开始
+      const initialMinutes = 480;
       const initialCalendar = getCalendar(initialMinutes);
+
+      const initialJob = createInitialJob();
 
       set({
         ...createInitialState(),
         day: startDay,
-        phase: 'morning_news',
         gameStatus: 'playing',
         currentPrice: lastClose,
         todayOpen: lastClose,
@@ -236,23 +294,37 @@ export const useGameStore = create<StoreState>((set, get) => ({
         openingPattern: pattern,
         recentIntradayHistory: [],
         maVisible: { ma5: true, ma10: true, ma20: true },
+        job: initialJob,
         messages: sysMsgs([
           `欢迎来到股市！你的目标：${goal.title}（¥${goal.targetAmount.toLocaleString()}）`,
           `你选择了【${stockName}】，当前价格 ¥${lastClose}`,
           `📅 ${initialCalendar.date} ${getDayOfWeekLabel(initialCalendar.dayOfWeek)} ${minuteToTimeStr(initialCalendar.minuteOfDay)}`,
+          `💼 你的工作：${initialJob.jobTitle}，日薪 ¥${initialJob.dailySalary}`,
+          '⚠️ 上班时间想炒股得摸鱼，小心被领导抓到！',
           '⚡ 注意管理你的精力和饥饿值，不要猝死哦！',
           '祝你好运，散户！',
         ]),
         waterfallQueue: [],
         intradayNewsSchedule: [],
-        // 新系统初始化
         vitality: createInitialVitality(),
         totalGameMinutes: initialMinutes,
         calendar: initialCalendar,
         deathCause: null,
         currentTradingDay: 0,
         todayIntradayGenerated: false,
+        todaySettled: false,
+        lastMarketPhase: initialCalendar.marketPhase,
+        todayNewsPushed: {
+          morningNews: false,
+          openBurst: false,
+          lunchNews: false,
+          pmBurst: false,
+          closeNews: false,
+        },
       });
+
+      // 自动开始时间流动
+      setTimeout(() => get().actions.startPlayback(), 100);
     },
 
     loadGame: () => {
@@ -260,22 +332,31 @@ export const useGameStore = create<StoreState>((set, get) => ({
         const saved = localStorage.getItem(SAVE_KEY);
         if (!saved) return false;
         const state = JSON.parse(saved);
-        // 兼容旧存档：string[] → NewsMessage[]
+        // 兼容旧存档
         if (state.messages && state.messages.length > 0 && typeof state.messages[0] === 'string') {
           state.messages = (state.messages as string[]).map((t: string) => sysMsg(t));
         }
         if (!state.waterfallQueue) state.waterfallQueue = [];
         if (!state.intradayNewsSchedule) state.intradayNewsSchedule = [];
         if (!state.newsIdCounter) state.newsIdCounter = _globalNewsId;
-        // 兼容旧存档：新系统字段
         if (!state.vitality) state.vitality = createInitialVitality();
-        if (!state.totalGameMinutes) state.totalGameMinutes = 540;
+        if (!state.totalGameMinutes) state.totalGameMinutes = 480;
         if (!state.calendar) state.calendar = getCalendar(state.totalGameMinutes);
         if (!state.tradeMarkers) state.tradeMarkers = [];
+        if (!state.job) state.job = createInitialJob();
         if (state.deathCause === undefined) state.deathCause = null;
         if (!state.currentTradingDay) state.currentTradingDay = 0;
         if (state.todayIntradayGenerated === undefined) state.todayIntradayGenerated = false;
+        if (state.todaySettled === undefined) state.todaySettled = false;
+        if (!state.lastMarketPhase) state.lastMarketPhase = state.calendar?.marketPhase ?? 'pre_market';
+        if (!state.todayNewsPushed) state.todayNewsPushed = {
+          morningNews: false, openBurst: false, lunchNews: false, pmBurst: false, closeNews: false,
+        };
+        // 移除旧的 phase 字段
+        delete state.phase;
         set({ ...state, pendingCard: null, lunchHint: null, tickTimerId: null, playbackSpeed: 1 as PlaybackSpeed });
+        // 自动恢复时间流动
+        setTimeout(() => get().actions.startPlayback(), 100);
         return true;
       } catch {
         return false;
@@ -285,7 +366,6 @@ export const useGameStore = create<StoreState>((set, get) => ({
     saveGame: () => {
       const state = get();
       const { actions, pendingCard, lunchHint, tickTimerId, waterfallQueue, ...saveable } = state;
-      // 保存时确保睡眠状态被中断
       const saveState = {
         ...saveable,
         vitality: { ...saveable.vitality, isSleeping: false },
@@ -293,18 +373,17 @@ export const useGameStore = create<StoreState>((set, get) => ({
       localStorage.setItem(SAVE_KEY, JSON.stringify(saveState));
     },
 
-    // ==================== 盘中控制 ====================
+    // ==================== 时间控制 ====================
 
     setPlaybackSpeed: (speed: PlaybackSpeed) => {
       const state = get();
       set({ playbackSpeed: speed });
 
-      // 重启定时器
       if (state.tickTimerId !== null) {
         clearInterval(state.tickTimerId);
         set({ tickTimerId: null });
       }
-      if (speed > 0 && (state.phase === 'am_trading' || state.phase === 'pm_trading')) {
+      if (speed > 0) {
         get().actions.startPlayback();
       }
     },
@@ -313,10 +392,11 @@ export const useGameStore = create<StoreState>((set, get) => ({
       const state = get();
       if (state.tickTimerId !== null) clearInterval(state.tickTimerId);
       if (state.playbackSpeed === 0) return;
+      if (state.gameStatus !== 'playing') return;
 
       const interval = SPEED_INTERVALS[state.playbackSpeed];
       const id = window.setInterval(() => {
-        get().actions.tickForward();
+        get().actions.globalTick();
       }, interval);
 
       set({ tickTimerId: id });
@@ -330,149 +410,252 @@ export const useGameStore = create<StoreState>((set, get) => ({
       }
     },
 
-    tickForward: () => {
+    // ==================== 核心：全局时间推进 ====================
+    globalTick: () => {
       const state = get();
-      const nextTick = state.currentTick + 1;
+      if (state.gameStatus !== 'playing') return;
 
-      // 上午盘结束 → 自动进入午休
-      if (state.phase === 'am_trading' && nextTick > AM_END_TICK) {
-        get().actions.stopPlayback();
-        const amClosePrice = state.intradayTicks[AM_END_TICK]?.price ?? state.currentPrice;
+      const newTotalMin = state.totalGameMinutes + 1;
+      const newCalendar = getCalendar(newTotalMin);
+      const prevCalendar = state.calendar;
+      const prevPhase = state.lastMarketPhase;
+      const curPhase = newCalendar.marketPhase;
 
-        // 自动生成午间消息：根据下午走势给出提示（40%准确率，有卡牌加成）
-        const pmClosePrice = state.intradayTicks[TOTAL_TICKS - 1]?.price ?? amClosePrice;
-        const actualDirection = pmClosePrice >= amClosePrice ? 'up' : 'down';
-        const infoAccuracy = 0.4 + sumCardEffects(state.cards, 'info_accuracy');
-        const isReliable = Math.random() < infoAccuracy;
-        const hintDirection = isReliable ? actualDirection : (actualDirection === 'up' ? 'down' : 'up');
+      // 新的一天检测（日期变了）
+      const isNewDay = newCalendar.date !== prevCalendar.date;
 
-        const lunchMessages = [
-          { text: '食堂里有人在聊这只股票，听说下午可能', source: '食堂八卦' },
-          { text: '你刷到一条消息，分析师说下午走势可能', source: '手机推送' },
-          { text: '同事神秘兮兮地跟你说，下午大概率会', source: '同事爆料' },
-          { text: '午休群里有人发了条消息，说下午要', source: '微信群' },
-          { text: '你打盹时梦到下午股价', source: '午间灵感' },
-        ];
-        const lunchMsg = lunchMessages[Math.floor(Math.random() * lunchMessages.length)];
+      let updates: Partial<StoreState> = {
+        totalGameMinutes: newTotalMin,
+        calendar: newCalendar,
+        lastMarketPhase: curPhase,
+      };
 
-        set({
-          phase: 'lunch_break',
-          currentTick: AM_END_TICK,
-          currentPrice: amClosePrice,
-          amClose: amClosePrice,
-          chartView: 'intraday',
-          lunchHint: { direction: hintDirection, reliable: isReliable },
-          messages: [
-            sysMsg(`🍜 午间休息 | 上午收盘: ¥${amClosePrice.toFixed(2)}`, 'market_index'),
-            sysMsg(`💬 ${lunchMsg.source}：${lunchMsg.text}${hintDirection === 'up' ? '涨 📈' : '跌 📉'}`, 'rumor'),
-          ],
-          intradayNewsSchedule: [],
-        });
-        return;
+      const newMessages: NewsMessage[] = [];
+      const newWaterfall: NewsMessage[] = [];
+      const skipWaterfall = state.playbackSpeed >= 3;
+
+      // ====== 新一天处理 ======
+      if (isNewDay) {
+        const newDayUpdates = handleNewDay(state, newCalendar);
+        updates = { ...updates, ...newDayUpdates.updates };
+        newMessages.push(...newDayUpdates.messages);
+        newWaterfall.push(...newDayUpdates.messages);
       }
 
-      // 下午盘结束 → 自动进入盘后
-      if (state.phase === 'pm_trading' && nextTick >= TOTAL_TICKS - 1) {
-        get().actions.stopPlayback();
-        const closePrice = state.intradayTicks[TOTAL_TICKS - 1]?.price ?? state.currentPrice;
+      // ====== 市场阶段转换事件 ======
+      const todayPushed = { ...(isNewDay ? {
+        morningNews: false, openBurst: false, lunchNews: false, pmBurst: false, closeNews: false,
+      } : (updates.todayNewsPushed ?? state.todayNewsPushed)) };
 
-        // 生成日K数据
-        const ohlc = intradayToOHLC(state.intradayTicks);
-        const dayData = { day: state.day, ...ohlc };
-        const changePercent = ((closePrice - state.todayOpen) / state.todayOpen * 100).toFixed(2);
-
-        // 保留最近5天分时数据
-        const recentHistory = [...state.recentIntradayHistory, state.intradayTicks];
-        if (recentHistory.length > 5) recentHistory.shift();
-
-        set({
-          phase: 'after_hours',
-          currentTick: TOTAL_TICKS - 1,
-          currentPrice: closePrice,
-          stockHistory: [...state.stockHistory, dayData],
-          recentIntradayHistory: recentHistory,
-          chartView: 'intraday',
-          messages: [
-            sysMsg(`📊 收盘价: ¥${closePrice.toFixed(2)} (${Number(changePercent) >= 0 ? '+' : ''}${changePercent}%)`, 'market_index', 'important'),
-            sysMsg(`⚡${Math.round(state.vitality.energy)} 🍚${Math.round(state.vitality.hunger)} 🧠${Math.round(state.vitality.sanity)}`),
-          ],
-          intradayNewsSchedule: [],
-        });
-        return;
+      // 盘前晨报（08:30自动推送，每天一次）
+      if (newCalendar.isTradingDay && newCalendar.minuteOfDay >= 510 && !todayPushed.morningNews) {
+        const morningMsgs = generateMorningNews(state);
+        newMessages.push(...morningMsgs);
+        newWaterfall.push(...morningMsgs);
+        todayPushed.morningNews = true;
       }
 
-      // 正常推进tick
-      if (nextTick < state.intradayTicks.length) {
-        const tick = state.intradayTicks[nextTick];
-        const changePercent = ((tick.price - state.todayOpen) / state.todayOpen) * 100;
+      // 进入上午交易时段：生成分时数据 + 开盘爆发消息
+      if (curPhase === 'am_trading' && !state.todayIntradayGenerated && !(updates.todayIntradayGenerated)) {
+        const openResult = handleMarketOpen(state, updates);
+        updates = { ...updates, ...openResult.updates };
+        newMessages.push(...openResult.messages);
+        newWaterfall.push(...openResult.messages);
+        todayPushed.openBurst = true;
+      }
 
-        // 检查预排新闻
-        const newsCtx = {
-          stockName: state.stockName,
-          price: tick.price,
-          changePercent,
-          todayOpen: state.todayOpen,
-          amClose: state.amClose,
-        };
-        const { messages: newNews, updatedSchedule, nextId } = checkScheduledNews(
-          nextTick, state.intradayNewsSchedule, newsCtx, state.newsIdCounter,
-        );
+      // 上午→午休转换：生成午间消息
+      if (prevPhase === 'am_trading' && curPhase === 'lunch_break' && !todayPushed.lunchNews) {
+        const lunchResult = handleLunchTransition(state);
+        newMessages.push(...lunchResult.messages);
+        newWaterfall.push(...lunchResult.messages);
+        todayPushed.lunchNews = true;
+        // 记录上午收盘价
+        const amEndTick = 120;
+        const amClosePrice = state.intradayTicks[amEndTick]?.price ?? state.currentPrice;
+        updates.amClose = amClosePrice;
+      }
 
-        // 快速播放（speed>=3）时跳过瀑布动画
-        const skipWaterfall = state.playbackSpeed >= 3;
+      // 午休→下午交易转换：下午开盘消息
+      if (prevPhase === 'lunch_break' && curPhase === 'pm_trading' && !todayPushed.pmBurst) {
+        const pmResult = handlePMOpen(state);
+        newMessages.push(...pmResult.messages);
+        newWaterfall.push(...pmResult.messages);
+        todayPushed.pmBurst = true;
+      }
 
-        // 推进游戏时间（每个分时tick = 1分钟）并更新生命体征
-        const newTotalMin = state.totalGameMinutes + 1;
-        const newCalendar = getCalendar(newTotalMin);
+      // 下午交易→盘后转换：收盘 + 结算
+      if (prevPhase === 'pm_trading' && curPhase === 'after_hours' && !todayPushed.closeNews) {
+        const closeResult = handleMarketClose(state);
+        updates = { ...updates, ...closeResult.updates };
+        newMessages.push(...closeResult.messages);
+        newWaterfall.push(...closeResult.messages);
+        todayPushed.closeNews = true;
+      }
 
-        // 计算持仓涨跌幅
-        const holdingChangePercent = state.shares > 0 && state.shareCostBasis > 0
-          ? ((tick.price - state.shareCostBasis) / state.shareCostBasis * 100)
-          : 0;
+      updates.todayNewsPushed = todayPushed;
 
-        const vitalityUpdates = tickVitality(state.vitality, 1, {
-          isSleeping: state.vitality.isSleeping,
-          holdingChangePercent,
-          isWatching: true, // 交易时段=看盘
-          sleepElapsedHours: 0,
-        });
+      // ====== 交易时段：推进分时tick ======
+      if ((curPhase === 'am_trading' || curPhase === 'pm_trading') && state.intradayTicks.length > 0) {
+        const tickIdx = gameMinuteToTick(newCalendar.minuteOfDay);
+        if (tickIdx !== null && tickIdx < state.intradayTicks.length) {
+          const tick = state.intradayTicks[tickIdx];
+          updates.currentTick = tickIdx;
+          updates.currentPrice = tick.price;
 
-        const newVitality = { ...state.vitality, ...vitalityUpdates };
-
-        // 检查死亡
-        const death = checkDeath(newVitality);
-
-        set({
-          currentTick: nextTick,
-          currentPrice: tick.price,
-          intradayNewsSchedule: updatedSchedule,
-          newsIdCounter: nextId,
-          totalGameMinutes: newTotalMin,
-          calendar: newCalendar,
-          vitality: newVitality,
-          ...(death ? {
-            gameStatus: 'lost' as const,
-            deathCause: death,
-          } : {}),
-          ...(newNews.length > 0 ? {
-            messages: [...state.messages, ...newNews],
-            waterfallQueue: skipWaterfall ? state.waterfallQueue : [...state.waterfallQueue, ...newNews],
-          } : {}),
-        });
-
-        // 如果死亡了，停止播放
-        if (death) {
-          get().actions.stopPlayback();
+          // 检查预排新闻
+          const changePercent = ((tick.price - state.todayOpen) / state.todayOpen) * 100;
+          const newsCtx = {
+            stockName: state.stockName,
+            price: tick.price,
+            changePercent,
+            todayOpen: state.todayOpen,
+            amClose: updates.amClose ?? state.amClose,
+          };
+          const { messages: tickNews, updatedSchedule, nextId } = checkScheduledNews(
+            tickIdx, state.intradayNewsSchedule, newsCtx, updates.newsIdCounter ?? state.newsIdCounter,
+          );
+          if (tickNews.length > 0) {
+            newMessages.push(...tickNews);
+            if (!skipWaterfall) newWaterfall.push(...tickNews);
+          }
+          updates.intradayNewsSchedule = updatedSchedule;
+          updates.newsIdCounter = nextId;
         }
       }
+
+      // ====== 生命体征更新 ======
+      const isInTrading = curPhase === 'am_trading' || curPhase === 'pm_trading';
+      const holdingChangePercent = state.shares > 0 && state.shareCostBasis > 0
+        ? ((state.currentPrice - state.shareCostBasis) / state.shareCostBasis * 100)
+        : 0;
+
+      const sleepElapsed = state.vitality.isSleeping
+        ? (newTotalMin - state.vitality.sleepStartMinute) / 60
+        : 0;
+
+      const vitalityUpdates = tickVitality(state.vitality, 1, {
+        isSleeping: state.vitality.isSleeping,
+        holdingChangePercent,
+        isWatching: isInTrading && !state.vitality.isSleeping,
+        sleepElapsedHours: sleepElapsed,
+      });
+
+      const newVitality = { ...state.vitality, ...vitalityUpdates };
+
+      // 自动醒来检查
+      if (state.vitality.isSleeping && state.vitality.sleepHours > 0) {
+        const sleepDuration = (newTotalMin - state.vitality.sleepStartMinute) / 60;
+        if (sleepDuration >= state.vitality.sleepHours) {
+          newVitality.isSleeping = false;
+          newVitality.sleepStartMinute = 0;
+          newVitality.sleepHours = 0;
+          newVitality.hoursWithoutSleep = 0;
+          const wakeMsg = sysMsg(`☀️ 自然醒来！睡了${sleepDuration.toFixed(1)}小时，精力: ${Math.round(newVitality.energy)}/100`);
+          newMessages.push(wakeMsg);
+          newWaterfall.push(wakeMsg);
+        }
+      }
+
+      updates.vitality = newVitality;
+
+      // ====== 上班系统更新 ======
+      const jobState = updates.job ?? state.job;
+      if (jobState.employed) {
+        const isWorkDay = newCalendar.isTradingDay; // 工作日 = 交易日
+        const inWorkHours = isWorkDay && newCalendar.minuteOfDay >= WORK_START_MINUTE && newCalendar.minuteOfDay < WORK_END_MINUTE;
+        const newJob = { ...jobState, isWorkingHours: inWorkHours };
+
+        // 上班时间：工作进度 & 摸鱼分钟统计
+        if (inWorkHours) {
+          newJob.workMinutesToday += 1;
+          if (newJob.isSlacking) {
+            // 摸鱼中 → 不涨工作进度，统计摸鱼分钟
+            newJob.slackMinutesToday += 1;
+          } else {
+            // 认真工作 → 涨工作进度（每分钟增加 100/WORK_TOTAL_MINUTES）
+            newJob.workProgress = Math.min(100, newJob.workProgress + (100 / WORK_TOTAL_MINUTES));
+          }
+        }
+
+        // 发工资：每个工作日到下班时（18:00）按工作进度比率发放
+        if (isWorkDay && newCalendar.minuteOfDay >= WORK_END_MINUTE && !newJob.paidToday) {
+          const progressRatio = Math.round(newJob.workProgress) / 100;
+          const actualSalary = Math.round(newJob.dailySalary * progressRatio);
+          updates.cash = Math.round(((updates.cash ?? state.cash) + actualSalary) * 100) / 100;
+          if (progressRatio >= 0.9) {
+            newMessages.push(sysMsg(`💰 今日工资到账: +¥${actualSalary} (${newJob.jobTitle}，出勤率${Math.round(newJob.workProgress)}%，表现优秀！)`, 'system', 'important'));
+          } else if (progressRatio >= 0.5) {
+            newMessages.push(sysMsg(`💰 今日工资到账: +¥${actualSalary} (${newJob.jobTitle}，出勤率仅${Math.round(newJob.workProgress)}%，按比例扣薪)`, 'system', 'important'));
+          } else {
+            newMessages.push(sysMsg(`💰 今日工资到账: +¥${actualSalary} (${newJob.jobTitle}，出勤率${Math.round(newJob.workProgress)}%，你今天大部分时间在摸鱼...)`, 'system', 'urgent'));
+          }
+          newWaterfall.push(sysMsg(`💰 工资: +¥${actualSalary} (进度${Math.round(newJob.workProgress)}%)`, 'system', 'important'));
+          newJob.paidToday = true;
+        }
+
+        // 下班自动关闭摸鱼
+        if (!inWorkHours && newJob.isSlacking) {
+          newJob.isSlacking = false;
+          newJob.isOnToilet = false;
+        }
+
+        // 带薪拉屎倒计时
+        if (newJob.isOnToilet) {
+          const toiletElapsed = newTotalMin - newJob.toiletStartMinute;
+          if (toiletElapsed >= newJob.toiletMaxMinutes) {
+            // 拉屎时间用完
+            newJob.isOnToilet = false;
+            const toiletEndMsg = sysMsg('🚽 带薪拉屎时间到！你被迫回到工位...小心摸鱼被抓！', 'system', 'important');
+            newMessages.push(toiletEndMsg);
+            newWaterfall.push(toiletEndMsg);
+          }
+        }
+
+        // 摸鱼被抓检测（上班时间 + 正在摸鱼 + 不在厕所）
+        if (inWorkHours && newJob.isSlacking && !newJob.isOnToilet) {
+          if (Math.random() < SLACKING_CATCH_RATE) {
+            const penalty = newJob.catchPenalty;
+            newJob.caughtToday += 1;
+            newJob.totalCaught += 1;
+            newJob.isSlacking = false; // 被抓后自动关闭摸鱼
+            updates.cash = Math.round(((updates.cash ?? state.cash) - penalty) * 100) / 100;
+            const catchMsgs = [
+              `👔 "小${newJob.jobTitle.slice(-1)}，上班时间看什么股票！" 罚款 ¥${penalty}`,
+              `😱 领导突然出现在身后！"这是K线图？？" 罚款 ¥${penalty}`,
+              `👀 HR发来消息：有人举报你上班摸鱼。罚款 ¥${penalty}`,
+              `📸 被领导拍到屏幕上的股票APP！罚款 ¥${penalty}`,
+              `🤦 开会时手机屏幕亮了，弹出股票成交通知... 罚款 ¥${penalty}`,
+            ];
+            const catchMsg = sysMsg(catchMsgs[Math.floor(Math.random() * catchMsgs.length)], 'system', 'urgent');
+            newMessages.push(catchMsg);
+            newWaterfall.push(catchMsg);
+          }
+        }
+
+        updates.job = newJob;
+      }
+
+      // 死亡检查
+      const death = checkDeath(newVitality);
+      if (death) {
+        updates.gameStatus = 'lost';
+        updates.deathCause = death;
+        get().actions.stopPlayback();
+      }
+
+      // 合并消息
+      if (newMessages.length > 0) {
+        updates.messages = [...state.messages, ...newMessages].slice(-100); // 保留最新100条
+        if (!skipWaterfall && newWaterfall.length > 0) {
+          updates.waterfallQueue = [...state.waterfallQueue, ...newWaterfall];
+        }
+      }
+
+      set(updates as Partial<StoreState>);
     },
 
     setChartView: (view: StoreState['chartView']) => {
-      const state = get();
-      // 盘中只能看分时图
-      if (state.phase === 'am_trading' || state.phase === 'pm_trading') {
-        return; // 锁定分时图
-      }
       set({ chartView: view });
     },
 
@@ -481,159 +664,29 @@ export const useGameStore = create<StoreState>((set, get) => ({
       set({ maVisible: { ...state.maVisible, [key]: !state.maVisible[key] } });
     },
 
-    // ==================== 回合推进 ====================
-
-    advancePhase: () => {
-      const state = get();
-      if (state.gameStatus !== 'playing') return;
-
-      if (state.phase === 'settlement') {
-        // 进入下一天
-        const nextDay = state.day + 1;
-        const staminaBonus = sumCardEffects(state.cards, 'stamina_bonus');
-        const baseStamina = 3 + staminaBonus + state.extraStaminaNextDay;
-
-        const { triggered, remaining } = checkEventChains(nextDay, state.activeEventChains);
-        const chainEvent = triggered.length > 0 ? triggered[0] : null;
-        const todayEvent = chainEvent || rollEvent();
-        const eventMod = getEventStockModifier(todayEvent);
-
-        const cashFromEvent = getEventCashChange(todayEvent);
-        const expenseFromEvent = getEventExpenseChange(todayEvent);
-        const staminaFromEvent = getEventStaminaChange(todayEvent);
-        const cardFromEvent = getEventCard(todayEvent);
-        const chainId = getEventChainId(todayEvent);
-
-        const newChains = [...remaining];
-        if (chainId) {
-          newChains.push({ eventId: chainId, triggerDay: nextDay + 1 + Math.floor(Math.random() * 2) });
-        }
-
-        let pendingCard: PendingCard | null = null;
-        let newCards = state.cards;
-        if (cardFromEvent) {
-          const result = addCard(state.cards, cardFromEvent, state.maxCardSlots);
-          if (result === null) {
-            pendingCard = { card: cardFromEvent };
-          } else {
-            newCards = result;
-          }
-        }
-
-        const newStamina = Math.max(0, baseStamina + staminaFromEvent);
-
-        set({
-          day: nextDay,
-          phase: 'morning_news',
-          currentEvent: todayEvent,
-          eventLog: [...state.eventLog, { day: nextDay, event: todayEvent }],
-          cash: state.cash + cashFromEvent,
-          dailyExpense: Math.max(100, state.dailyExpense + expenseFromEvent),
-          stamina: newStamina,
-          maxStamina: baseStamina,
-          boughtToday: false,
-          activitiesDoneToday: [],
-          activeEventChains: newChains,
-          cards: newCards,
-          pendingCard,
-          eventModifier: eventMod,
-          extraStaminaNextDay: 0,
-          messages: [
-            sysMsg(`=== 第 ${nextDay - state.historyDays} 天 ===`),
-            sysMsg(`📰 ${todayEvent.title}`, 'breaking', todayEvent.rarity === 'legendary' ? 'urgent' : 'important'),
-            sysMsg(todayEvent.description),
-          ],
-          lunchHint: null,
-          intradayTicks: [],
-          currentTick: 0,
-          chartView: 'intraday',
-        });
-        return;
-      }
-
-      if (state.phase === 'morning_news') {
-        // 进入上午交易：预生成全天分时数据
-        const prevClose = state.currentPrice;
-        const trend = getTrendForDay(state.day, state.trendSegments);
-        const ticks = generateIntradayTicks(prevClose, trend, state.eventModifier);
-        const openPrice = ticks[0].price;
-        const changePercent = ((openPrice - prevClose) / prevClose) * 100;
-
-        // 生成开盘爆发消息 + 预排上午新闻
-        const newsCtx = { stockName: state.stockName, price: openPrice, changePercent, todayOpen: openPrice };
-        const { messages: burstMsgs, nextId } = generateSessionBurst('am_trading', newsCtx, state.newsIdCounter);
-        const amSchedule = scheduleSessionNews(5, AM_END_TICK - 5);
-
-        const openMsgs = [
-          sysMsg(`📈 开盘价: ¥${openPrice.toFixed(2)} ${openPrice >= prevClose ? '↑' : '↓'}`, 'market_index', 'important'),
-          sysMsg('盘中实时交易已开始，可随时买入/卖出'),
-        ];
-
-        set({
-          phase: 'am_trading',
-          todayOpen: openPrice,
-          currentPrice: openPrice,
-          intradayTicks: ticks,
-          currentTick: 0,
-          playbackSpeed: 1 as PlaybackSpeed,
-          chartView: 'intraday',
-          tradeMarkers: [],
-          messages: [...openMsgs, ...burstMsgs],
-          waterfallQueue: burstMsgs,
-          intradayNewsSchedule: amSchedule,
-          newsIdCounter: nextId,
-        });
-
-        // 启动播放
-        setTimeout(() => get().actions.startPlayback(), 50);
-        return;
-      }
-
-      if (state.phase === 'lunch_break') {
-        // 进入下午交易：从PM_START_TICK继续
-        const pmPrice = state.intradayTicks[PM_START_TICK]?.price ?? state.currentPrice;
-        const changePercent = ((pmPrice - state.todayOpen) / state.todayOpen) * 100;
-
-        // 生成下午开盘爆发消息 + 预排下午新闻
-        const newsCtx = { stockName: state.stockName, price: pmPrice, changePercent, todayOpen: state.todayOpen, amClose: state.amClose };
-        const { messages: burstMsgs, nextId } = generateSessionBurst('pm_trading', newsCtx, state.newsIdCounter);
-        const pmSchedule = scheduleSessionNews(PM_START_TICK + 5, TOTAL_TICKS - 10);
-
-        const pmOpenMsg = sysMsg('📈 下午开盘，继续交易', 'market_index');
-
-        set({
-          phase: 'pm_trading',
-          currentTick: PM_START_TICK,
-          chartView: 'intraday',
-          messages: [pmOpenMsg, ...burstMsgs],
-          waterfallQueue: burstMsgs,
-          intradayNewsSchedule: pmSchedule,
-          newsIdCounter: nextId,
-        });
-
-        setTimeout(() => get().actions.startPlayback(), 50);
-        return;
-      }
-
-      if (state.phase === 'after_hours') {
-        get().actions.finishAfterHours();
-        return;
-      }
-    },
-
     // ==================== 交易 ====================
 
     buy: (shares: number) => {
       const state = get();
-      if (state.vitality.isSleeping) {
-        set({ messages: [sysMsg('💤 你在睡觉，无法交易')] });
+      const { marketPhase } = state.calendar;
+      const isTrading = marketPhase === 'am_trading' || marketPhase === 'pm_trading';
+      if (!isTrading) {
+        set({ messages: [...state.messages, sysMsg('❌ 非交易时段，无法买入')] });
         return;
       }
-      // SAN失控检查
+      if (state.vitality.isSleeping) {
+        set({ messages: [...state.messages, sysMsg('💤 你在睡觉，无法交易')] });
+        return;
+      }
+      // 上班时间必须摸鱼才能交易
+      if (state.job.employed && state.job.isWorkingHours && !state.job.isSlacking) {
+        set({ messages: [...state.messages, sysMsg('❌ 上班时间！先开启摸鱼模式才能交易', 'system', 'important')] });
+        return;
+      }
       if (state.vitality.isInsane) {
         const check = insanityCheck();
         if (check?.blocked) {
-          set({ messages: [sysMsg(check.message)] });
+          set({ messages: [...state.messages, sysMsg(check.message)] });
           return;
         }
         if (check) set({ messages: [...state.messages, sysMsg(check.message)] });
@@ -650,28 +703,38 @@ export const useGameStore = create<StoreState>((set, get) => ({
         shareCostBasis: Math.round((totalCost / totalShares) * 100) / 100,
         boughtToday: true,
         tradeMarkers: [...state.tradeMarkers, { tick: state.currentTick, price: state.currentPrice, type: 'B' as const, shares }],
-        messages: [sysMsg(`✅ 买入 ${shares} 股 @ ¥${state.currentPrice.toFixed(2)}，花费 ¥${cost.toFixed(2)}`, 'trade')],
+        messages: [...state.messages, sysMsg(`✅ 买入 ${shares} 股 @ ¥${state.currentPrice.toFixed(2)}，花费 ¥${cost.toFixed(2)}`, 'trade')],
       });
     },
 
     sell: (shares: number) => {
       const state = get();
-      if (state.vitality.isSleeping) {
-        set({ messages: [sysMsg('💤 你在睡觉，无法交易')] });
+      const { marketPhase } = state.calendar;
+      const isTrading = marketPhase === 'am_trading' || marketPhase === 'pm_trading';
+      if (!isTrading) {
+        set({ messages: [...state.messages, sysMsg('❌ 非交易时段，无法卖出')] });
         return;
       }
-      // SAN失控检查
+      if (state.vitality.isSleeping) {
+        set({ messages: [...state.messages, sysMsg('💤 你在睡觉，无法交易')] });
+        return;
+      }
+      // 上班时间必须摸鱼才能交易
+      if (state.job.employed && state.job.isWorkingHours && !state.job.isSlacking) {
+        set({ messages: [...state.messages, sysMsg('❌ 上班时间！先开启摸鱼模式才能交易', 'system', 'important')] });
+        return;
+      }
       if (state.vitality.isInsane) {
         const check = insanityCheck();
         if (check?.blocked) {
-          set({ messages: [sysMsg(check.message)] });
+          set({ messages: [...state.messages, sysMsg(check.message)] });
           return;
         }
         if (check) set({ messages: [...state.messages, sysMsg(check.message)] });
       }
       if (shares > state.shares || shares <= 0) return;
       if (state.boughtToday) {
-        set({ messages: [sysMsg('❌ T+1规则：今日买入的股票明天才能卖出！', 'system', 'important')] });
+        set({ messages: [...state.messages, sysMsg('❌ T+1规则：今日买入的股票明天才能卖出！', 'system', 'important')] });
         return;
       }
 
@@ -686,7 +749,7 @@ export const useGameStore = create<StoreState>((set, get) => ({
         shares: remainingShares,
         shareCostBasis: remainingShares > 0 ? state.shareCostBasis : 0,
         tradeMarkers: [...state.tradeMarkers, { tick: state.currentTick, price: state.currentPrice, type: 'S' as const, shares }],
-        messages: [
+        messages: [...state.messages,
           sysMsg(`✅ 卖出 ${shares} 股 @ ¥${state.currentPrice.toFixed(2)}，获得 ¥${total.toFixed(2)}${bonus > 0 ? ` (含加成 +¥${bonus.toFixed(2)})` : ''}`, 'trade'),
         ],
       });
@@ -696,75 +759,58 @@ export const useGameStore = create<StoreState>((set, get) => ({
 
     doActivity: (activityId: string) => {
       const state = get();
-      const costs: Record<string, number> = { social_media: 1, research: 1, socializing: 2, side_hustle: 1 };
-      const cost = costs[activityId] ?? 0;
-      if (state.stamina < cost) {
-        set({ messages: [sysMsg('❌ 体力不足！')] });
+      if (state.vitality.isSleeping) {
+        set({ messages: [...state.messages, sysMsg('💤 你在睡觉，无法进行活动')] });
+        return;
+      }
+
+      // 找工作特殊检查：已有工作不能找
+      if (activityId === 'find_job' && state.job.employed) {
+        set({ messages: [...state.messages, sysMsg('❌ 你已经有工作了！想找新工作得先离职')] });
+        return;
+      }
+
+      // 从 ACTIVITIES 数据中查找精力消耗
+      const activity = ACTIVITIES_DATA.find(a => a.id === activityId);
+      const cost = activity?.energyCost ?? 10;
+
+      if (state.vitality.energy < cost) {
+        set({ messages: [...state.messages, sysMsg(`❌ 精力不足！需要 ${cost} 精力，当前仅有 ${Math.round(state.vitality.energy)}`)] });
         return;
       }
       if (state.activitiesDoneToday.includes(activityId)) {
-        set({ messages: [sysMsg('❌ 今天已经做过了！')] });
+        set({ messages: [...state.messages, sysMsg('❌ 今天已经做过了！')] });
         return;
       }
 
       const result = executeActivity(activityId, state.cash, state.cards);
-      const updates: Partial<StoreState> = {
-        stamina: state.stamina - cost,
+      const newEnergy = Math.max(0, state.vitality.energy - cost);
+      const resultUpdates: Partial<StoreState> = {
+        vitality: { ...state.vitality, energy: newEnergy },
         activitiesDoneToday: [...state.activitiesDoneToday, activityId],
-        messages: [sysMsg(result.message)],
       };
 
-      if (result.cashChange) updates.cash = Math.round((state.cash + result.cashChange) * 100) / 100;
-      if (result.staminaChange) updates.extraStaminaNextDay = (state.extraStaminaNextDay || 0) + result.staminaChange;
-      if (result.infoHint) updates.lunchHint = result.infoHint;
+      // 找工作特殊处理
+      if (activityId === 'find_job' && result.message === '__JOB_FOUND__') {
+        const newJob = createInitialJob();
+        resultUpdates.job = newJob;
+        resultUpdates.messages = [...state.messages,
+          sysMsg(`🎉 找到新工作了！岗位：${newJob.jobTitle}，日薪 ¥${newJob.dailySalary}`, 'system', 'important'),
+          sysMsg('💼 明天开始上班，记得摸鱼要小心！'),
+        ];
+      } else {
+        resultUpdates.messages = [...state.messages, sysMsg(result.message)];
+      }
+
+      if (result.cashChange) resultUpdates.cash = Math.round((state.cash + result.cashChange) * 100) / 100;
+      if (result.infoHint) resultUpdates.lunchHint = result.infoHint;
       if (result.card) {
         const cardResult = addCard(state.cards, result.card, state.maxCardSlots);
-        if (cardResult === null) updates.pendingCard = { card: result.card };
-        else updates.cards = cardResult;
+        if (cardResult === null) resultUpdates.pendingCard = { card: result.card };
+        else resultUpdates.cards = cardResult;
       }
 
-      set(updates as StoreState);
-    },
-
-    finishAfterHours: () => {
-      const state = get();
-      const expenseReduction = sumCardEffects(state.cards, 'expense_reduce');
-      const actualExpense = Math.max(50, state.dailyExpense - expenseReduction);
-      const newCash = Math.round((state.cash - actualExpense) * 100) / 100;
-      const totalAssets = newCash + state.shares * state.currentPrice;
-      const newPeak = Math.max(state.peakAssets, totalAssets);
-
-      let gameStatus = state.gameStatus;
-      const messages: NewsMessage[] = [
-        sysMsg(`💸 今日生活费: -¥${actualExpense}`),
-        sysMsg(`💰 剩余现金: ¥${newCash.toFixed(2)}`),
-        sysMsg(`📊 总资产: ¥${totalAssets.toFixed(2)} / 目标 ¥${state.goal.targetAmount.toLocaleString()}`),
-      ];
-
-      if (totalAssets >= state.goal.targetAmount) {
-        gameStatus = 'won';
-        messages.push(sysMsg(`🎉 恭喜！你达成了目标【${state.goal.title}】！`, 'system', 'urgent'));
-      } else if (totalAssets < actualExpense) {
-        gameStatus = 'lost';
-        messages.push(sysMsg('💀 破产了！连生活费都付不起了...', 'system', 'urgent'));
-      } else if (newCash < 0) {
-        messages.push(sysMsg('⚠️ 警告：现金已为负！请尽快卖出股票回笼资金！', 'system', 'important'));
-      }
-
-      set({
-        phase: 'settlement',
-        cash: newCash,
-        gameStatus,
-        peakAssets: newPeak,
-        totalTradingDays: state.totalTradingDays + 1,
-        messages,
-      });
-
-      if (gameStatus === 'playing') {
-        setTimeout(() => get().actions.saveGame(), 0);
-      } else {
-        localStorage.removeItem(SAVE_KEY);
-      }
+      set(resultUpdates as StoreState);
     },
 
     // ==================== 卡牌 ====================
@@ -793,11 +839,11 @@ export const useGameStore = create<StoreState>((set, get) => ({
       const food = FOODS.find(f => f.id === foodId);
       if (!food) return;
       if (state.cash < food.cost) {
-        set({ messages: [sysMsg(`❌ 钱不够！${food.name}需要¥${food.cost}`)] });
+        set({ messages: [...state.messages, sysMsg(`❌ 钱不够！${food.name}需要¥${food.cost}`)] });
         return;
       }
       if (state.vitality.isSleeping) {
-        set({ messages: [sysMsg('❌ 睡觉中不能吃东西...')] });
+        set({ messages: [...state.messages, sysMsg('❌ 睡觉中不能吃东西...')] });
         return;
       }
 
@@ -811,7 +857,7 @@ export const useGameStore = create<StoreState>((set, get) => ({
           sanity: newSanity,
           hoursWithoutFood: 0,
         },
-        messages: [sysMsg(`${food.emoji} 吃了${food.name}！饱腹+${food.hungerRestore} (¥${food.cost})${food.sanityRestore > 0 ? ` SAN+${food.sanityRestore}` : ''}`)],
+        messages: [...state.messages, sysMsg(`${food.emoji} 吃了${food.name}！饱腹+${food.hungerRestore} (¥${food.cost})${food.sanityRestore > 0 ? ` SAN+${food.sanityRestore}` : ''}`)],
       });
     },
 
@@ -820,7 +866,6 @@ export const useGameStore = create<StoreState>((set, get) => ({
       if (state.vitality.isSleeping) return;
       if (hours <= 0 || hours > 12) return;
 
-      // 睡觉时暂停玩家操作
       set({
         vitality: {
           ...state.vitality,
@@ -828,12 +873,11 @@ export const useGameStore = create<StoreState>((set, get) => ({
           sleepStartMinute: state.totalGameMinutes,
           sleepHours: hours,
         },
-        messages: [sysMsg(`😴 开始睡觉，计划睡${hours}小时... 💤`)],
+        messages: [...state.messages, sysMsg(`😴 开始睡觉，计划睡${hours}小时... 💤`)],
       });
 
-      // 不暂停分时图播放，但切换到加速模式
-      if (state.phase === 'am_trading' || state.phase === 'pm_trading') {
-        // 交易时段睡觉：加速到3x
+      // 睡觉时加速时间
+      if (state.playbackSpeed < 3) {
         get().actions.setPlaybackSpeed(3);
       }
     },
@@ -853,13 +897,404 @@ export const useGameStore = create<StoreState>((set, get) => ({
           sleepHours: 0,
           hoursWithoutSleep: 0,
         },
-        messages: [sysMsg(`☀️ 醒来了！睡了${actualHours.toFixed(1)}小时，精力: ${Math.round(state.vitality.energy)}/100`)],
+        messages: [...state.messages, sysMsg(`☀️ 醒来了！睡了${actualHours.toFixed(1)}小时，精力: ${Math.round(state.vitality.energy)}/100`)],
       });
 
-      // 恢复正常播放速度
-      if (state.phase === 'am_trading' || state.phase === 'pm_trading') {
-        get().actions.setPlaybackSpeed(1);
+      // 恢复正常速度
+      get().actions.setPlaybackSpeed(1);
+    },
+
+    // ==================== 上班系统 ====================
+
+    toggleSlacking: () => {
+      const state = get();
+      const { job } = state;
+      if (!job.employed) {
+        set({ messages: [...state.messages, sysMsg('❌ 你没有工作，不需要摸鱼')] });
+        return;
       }
+      if (!job.isWorkingHours) {
+        set({ messages: [...state.messages, sysMsg('❌ 现在不是上班时间')] });
+        return;
+      }
+      if (state.vitality.isSleeping) {
+        set({ messages: [...state.messages, sysMsg('💤 你在睡觉...')] });
+        return;
+      }
+
+      const newSlacking = !job.isSlacking;
+
+      if (newSlacking) {
+        // 开始摸鱼
+        set({
+          job: { ...job, isSlacking: true },
+          messages: [...state.messages, sysMsg('🐟 开始摸鱼！偷偷打开了股票APP...小心领导！', 'system', 'important')],
+        });
+      } else {
+        // 关闭摸鱼 — 关闭的瞬间如果不在拉屎就有概率被抓
+        const onToilet = job.isOnToilet;
+        if (!onToilet && Math.random() < 0.2) {
+          // 关闭摸鱼时被发现屏幕上有股票APP
+          const penalty = job.catchPenalty;
+          const catchMessages = [
+            `👔 领导经过时看到你屏幕上的K线图："在干嘛？" 罚款 ¥${penalty}`,
+            `👀 同事举报你上班炒股，领导约谈！罚款 ¥${penalty}`,
+            `😱 切屏幕太慢被领导看到了！罚款 ¥${penalty}`,
+          ];
+          const msg = catchMessages[Math.floor(Math.random() * catchMessages.length)];
+          set({
+            job: {
+              ...job,
+              isSlacking: false,
+              caughtToday: job.caughtToday + 1,
+              totalCaught: job.totalCaught + 1,
+            },
+            cash: Math.round((state.cash - penalty) * 100) / 100,
+            messages: [...state.messages, sysMsg(msg, 'system', 'urgent')],
+          });
+        } else {
+          set({
+            job: { ...job, isSlacking: false },
+            messages: [...state.messages, sysMsg('📋 收起手机，假装认真工作...')],
+          });
+        }
+      }
+    },
+
+    startToilet: () => {
+      const state = get();
+      const { job } = state;
+      if (!job.employed || !job.isWorkingHours) {
+        set({ messages: [...state.messages, sysMsg('❌ 现在不是上班时间')] });
+        return;
+      }
+      if (job.toiletUsedToday) {
+        set({ messages: [...state.messages, sysMsg('❌ 今天的带薪拉屎机会已经用过了！')] });
+        return;
+      }
+      if (job.isOnToilet) {
+        set({ messages: [...state.messages, sysMsg('❌ 你已经在厕所了...')] });
+        return;
+      }
+
+      set({
+        job: {
+          ...job,
+          isOnToilet: true,
+          isSlacking: true, // 进厕所自动开启摸鱼
+          toiletUsedToday: true,
+          toiletStartMinute: state.totalGameMinutes,
+        },
+        messages: [...state.messages, sysMsg('🚽 带薪拉屎开始！30分钟内摸鱼不会被抓，放心操作！', 'system', 'important')],
+      });
+    },
+
+    quitJob: () => {
+      const state = get();
+      if (!state.job.employed) {
+        set({ messages: [...state.messages, sysMsg('❌ 你已经没有工作了')] });
+        return;
+      }
+
+      set({
+        job: {
+          ...state.job,
+          employed: false,
+          isSlacking: false,
+          isOnToilet: false,
+          isWorkingHours: false,
+        },
+        messages: [...state.messages,
+          sysMsg(`📝 你递交了辞职信，正式从${state.job.jobTitle}岗位离职`, 'system', 'important'),
+          sysMsg('🆓 从此再也不用摸鱼了！但也没有工资了...', 'system'),
+        ],
+      });
     },
   },
 }));
+
+// ==================== 辅助事件处理函数 ====================
+
+/** 新的一天处理：结算前一天 + 生成事件 */
+function handleNewDay(state: StoreState, newCalendar: GameCalendar): { updates: Partial<StoreState>; messages: NewsMessage[] } {
+  const messages: NewsMessage[] = [];
+  const updates: Partial<StoreState> = {};
+
+  // 如果前一天还没结算，先结算
+  if (!state.todaySettled && state.totalTradingDays > 0) {
+    const settlementResult = performSettlement(state);
+    Object.assign(updates, settlementResult.updates);
+    messages.push(...settlementResult.messages);
+  }
+
+  // 新的一天
+  const nextDay = state.day + 1;
+  const staminaBonus = sumCardEffects(state.cards, 'stamina_bonus');
+  const baseStamina = 3 + staminaBonus + state.extraStaminaNextDay;
+
+  // 事件系统
+  const { triggered, remaining } = checkEventChains(nextDay, state.activeEventChains);
+  const chainEvent = triggered.length > 0 ? triggered[0] : null;
+  const todayEvent = chainEvent || rollEvent();
+  const eventMod = getEventStockModifier(todayEvent);
+  const cashFromEvent = getEventCashChange(todayEvent);
+  const expenseFromEvent = getEventExpenseChange(todayEvent);
+  const staminaFromEvent = getEventStaminaChange(todayEvent);
+  const cardFromEvent = getEventCard(todayEvent);
+  const chainId = getEventChainId(todayEvent);
+
+  const newChains = [...remaining];
+  if (chainId) {
+    newChains.push({ eventId: chainId, triggerDay: nextDay + 1 + Math.floor(Math.random() * 2) });
+  }
+
+  let pendingCard: PendingCard | null = null;
+  let newCards = updates.cards ?? state.cards;
+  if (cardFromEvent) {
+    const result = addCard(newCards, cardFromEvent, state.maxCardSlots);
+    if (result === null) {
+      pendingCard = { card: cardFromEvent };
+    } else {
+      newCards = result;
+    }
+  }
+
+  const newStamina = Math.max(0, baseStamina + staminaFromEvent);
+
+  updates.day = nextDay;
+  updates.currentEvent = todayEvent;
+  updates.eventLog = [...state.eventLog, { day: nextDay, event: todayEvent }];
+  updates.cash = (updates.cash ?? state.cash) + cashFromEvent;
+  updates.dailyExpense = Math.max(100, (updates.dailyExpense ?? state.dailyExpense) + expenseFromEvent);
+  updates.stamina = newStamina;
+  updates.maxStamina = baseStamina;
+  updates.boughtToday = false;
+  updates.activitiesDoneToday = [];
+  updates.activeEventChains = newChains;
+  updates.cards = newCards;
+  updates.pendingCard = pendingCard;
+  updates.eventModifier = eventMod;
+  updates.extraStaminaNextDay = 0;
+  updates.lunchHint = null;
+  updates.intradayTicks = [];
+  updates.currentTick = 0;
+  updates.chartView = 'intraday';
+  updates.tradeMarkers = [];
+  updates.todayIntradayGenerated = false;
+  updates.todaySettled = false;
+  updates.todayNewsPushed = {
+    morningNews: false,
+    openBurst: false,
+    lunchNews: false,
+    pmBurst: false,
+    closeNews: false,
+  };
+
+  // 重置上班系统每日状态
+  const currentJob = state.job;
+  if (currentJob.employed) {
+    updates.job = {
+      ...currentJob,
+      isSlacking: false,
+      caughtToday: 0,
+      toiletUsedToday: false,
+      isOnToilet: false,
+      toiletStartMinute: 0,
+      paidToday: false,
+      isWorkingHours: false,
+      workProgress: 0,
+      workMinutesToday: 0,
+      slackMinutesToday: 0,
+    };
+  }
+
+  messages.push(
+    sysMsg(`📅 ${newCalendar.date} ${getDayOfWeekLabel(newCalendar.dayOfWeek)} — 新的一天`),
+  );
+
+  if (!newCalendar.isTradingDay) {
+    messages.push(sysMsg('📅 今天休市，享受生活吧！'));
+  }
+
+  return { updates, messages };
+}
+
+/** 盘前晨报（作为信息瀑布推送） */
+function generateMorningNews(state: StoreState): NewsMessage[] {
+  const event = state.currentEvent;
+  if (!event) return [sysMsg('📰 早安，散户！今天没什么特别新闻。')];
+
+  const messages: NewsMessage[] = [
+    sysMsg(`📰 晨报 — 第 ${state.day - state.historyDays} 天`, 'system', 'important'),
+    sysMsg(`🔴 ${event.title}`, 'breaking', event.rarity === 'legendary' ? 'urgent' : 'important'),
+    sysMsg(event.description),
+  ];
+
+  for (const e of event.effects) {
+    if (e.description) {
+      messages.push(sysMsg(`  📋 ${e.description}`, 'institution'));
+    }
+  }
+
+  return messages;
+}
+
+/** 开盘处理：生成分时数据 */
+function handleMarketOpen(state: StoreState, currentUpdates: Partial<StoreState>): { updates: Partial<StoreState>; messages: NewsMessage[] } {
+  const prevClose = currentUpdates.currentPrice ?? state.currentPrice;
+  const day = currentUpdates.day ?? state.day;
+  const eventMod = currentUpdates.eventModifier ?? state.eventModifier;
+  const trend = getTrendForDay(day, state.trendSegments);
+  const ticks = generateIntradayTicks(prevClose, trend, eventMod);
+  const openPrice = ticks[0].price;
+  const changePercent = ((openPrice - prevClose) / prevClose) * 100;
+
+  const newsCtx = { stockName: state.stockName, price: openPrice, changePercent, todayOpen: openPrice };
+  const { messages: burstMsgs, nextId } = generateSessionBurst('am_trading', newsCtx, currentUpdates.newsIdCounter ?? state.newsIdCounter);
+
+  // 预排上午新闻
+  const amSchedule = scheduleSessionNews(5, 115);
+
+  const messages: NewsMessage[] = [
+    sysMsg(`🔔 开盘！${state.stockName} ¥${openPrice.toFixed(2)} ${openPrice >= prevClose ? '↑' : '↓'} ${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%`, 'market_index', 'important'),
+    ...burstMsgs,
+  ];
+
+  return {
+    updates: {
+      todayOpen: openPrice,
+      currentPrice: openPrice,
+      intradayTicks: ticks,
+      currentTick: 0,
+      chartView: 'intraday',
+      todayIntradayGenerated: true,
+      intradayNewsSchedule: amSchedule,
+      newsIdCounter: nextId,
+      currentTradingDay: (currentUpdates.currentTradingDay ?? state.currentTradingDay) + 1,
+    },
+    messages,
+  };
+}
+
+/** 午间转换：生成午间消息 */
+function handleLunchTransition(state: StoreState): { messages: NewsMessage[] } {
+  const amClosePrice = state.intradayTicks[120]?.price ?? state.currentPrice;
+  const pmClosePrice = state.intradayTicks[TOTAL_TICKS - 1]?.price ?? amClosePrice;
+  const actualDirection = pmClosePrice >= amClosePrice ? 'up' : 'down';
+  const infoAccuracy = 0.4 + sumCardEffects(state.cards, 'info_accuracy');
+  const isReliable = Math.random() < infoAccuracy;
+  const hintDirection = isReliable ? actualDirection : (actualDirection === 'up' ? 'down' : 'up');
+
+  const lunchMessages = [
+    { text: '食堂里有人在聊这只股票，听说下午可能', source: '食堂八卦' },
+    { text: '你刷到一条消息，分析师说下午走势可能', source: '手机推送' },
+    { text: '同事神秘兮兮地跟你说，下午大概率会', source: '同事爆料' },
+    { text: '午休群里有人发了条消息，说下午要', source: '微信群' },
+    { text: '你打盹时梦到下午股价', source: '午间灵感' },
+  ];
+  const lunchMsg = lunchMessages[Math.floor(Math.random() * lunchMessages.length)];
+
+  const amChange = state.todayOpen > 0
+    ? ((amClosePrice - state.todayOpen) / state.todayOpen * 100)
+    : 0;
+
+  return {
+    messages: [
+      sysMsg(`🍜 午间休息 | 上午收盘: ¥${amClosePrice.toFixed(2)} (${amChange >= 0 ? '+' : ''}${amChange.toFixed(2)}%)`, 'market_index'),
+      sysMsg(`💬 ${lunchMsg.source}：${lunchMsg.text}${hintDirection === 'up' ? '涨 📈' : '跌 📉'}`, 'rumor'),
+    ],
+  };
+}
+
+/** 下午开盘处理 */
+function handlePMOpen(state: StoreState): { messages: NewsMessage[] } {
+  const pmTick = state.intradayTicks[121];
+  const pmPrice = pmTick?.price ?? state.currentPrice;
+  const changePercent = ((pmPrice - state.todayOpen) / state.todayOpen) * 100;
+
+  const newsCtx = { stockName: state.stockName, price: pmPrice, changePercent, todayOpen: state.todayOpen, amClose: state.amClose };
+  const { messages: burstMsgs } = generateSessionBurst('pm_trading', newsCtx, state.newsIdCounter);
+
+  return {
+    messages: [
+      sysMsg('📈 下午开盘，继续交易', 'market_index'),
+      ...burstMsgs,
+    ],
+  };
+}
+
+/** 收盘处理：生成日K + 结算 */
+function handleMarketClose(state: StoreState): { updates: Partial<StoreState>; messages: NewsMessage[] } {
+  const closePrice = state.intradayTicks[TOTAL_TICKS - 1]?.price ?? state.currentPrice;
+  const ohlc = intradayToOHLC(state.intradayTicks);
+  const dayData = { day: state.day, ...ohlc };
+  const changePercent = ((closePrice - state.todayOpen) / state.todayOpen * 100).toFixed(2);
+
+  // 保留最近5天分时
+  const recentHistory = [...state.recentIntradayHistory, state.intradayTicks];
+  if (recentHistory.length > 5) recentHistory.shift();
+
+  // 结算
+  const settlementResult = performSettlement({
+    ...state,
+    currentPrice: closePrice,
+    stockHistory: [...state.stockHistory, dayData],
+  });
+
+  return {
+    updates: {
+      currentPrice: closePrice,
+      stockHistory: [...state.stockHistory, dayData],
+      recentIntradayHistory: recentHistory,
+      todaySettled: true,
+      totalTradingDays: state.totalTradingDays + 1,
+      ...settlementResult.updates,
+    },
+    messages: [
+      sysMsg(`📊 收盘！¥${closePrice.toFixed(2)} (${Number(changePercent) >= 0 ? '+' : ''}${changePercent}%)`, 'market_index', 'important'),
+      ...settlementResult.messages,
+    ],
+  };
+}
+
+/** 日终结算 */
+function performSettlement(state: StoreState & Partial<StoreState>): { updates: Partial<StoreState>; messages: NewsMessage[] } {
+  const cash = state.cash ?? 0;
+  const currentPrice = state.currentPrice ?? 0;
+  const shares = state.shares ?? 0;
+  const dailyExpense = state.dailyExpense ?? 150;
+  const peakAssets = state.peakAssets ?? 30000;
+  const goal = state.goal;
+
+  const expenseReduction = sumCardEffects(state.cards ?? [], 'expense_reduce');
+  const actualExpense = Math.max(50, dailyExpense - expenseReduction);
+  const newCash = Math.round((cash - actualExpense) * 100) / 100;
+  const totalAssets = newCash + shares * currentPrice;
+  const newPeak = Math.max(peakAssets, totalAssets);
+
+  const messages: NewsMessage[] = [
+    sysMsg(`💸 生活费: -¥${actualExpense}`),
+    sysMsg(`💰 现金: ¥${newCash.toFixed(2)} | 总资产: ¥${totalAssets.toFixed(2)}`),
+  ];
+
+  const updates: Partial<StoreState> = {
+    cash: newCash,
+    peakAssets: newPeak,
+    todaySettled: true,
+  };
+
+  if (totalAssets >= goal.targetAmount) {
+    updates.gameStatus = 'won';
+    messages.push(sysMsg(`🎉 恭喜！你达成了目标【${goal.title}】！`, 'system', 'urgent'));
+    localStorage.removeItem(SAVE_KEY);
+  } else if (totalAssets < actualExpense) {
+    updates.gameStatus = 'lost';
+    updates.deathCause = 'bankruptcy';
+    messages.push(sysMsg('💀 破产了！连生活费都付不起了...', 'system', 'urgent'));
+    localStorage.removeItem(SAVE_KEY);
+  } else if (newCash < 0) {
+    messages.push(sysMsg('⚠️ 现金为负！尽快卖出股票回笼资金！', 'system', 'important'));
+  }
+
+  return { updates, messages };
+}

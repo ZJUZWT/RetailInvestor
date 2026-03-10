@@ -38,15 +38,15 @@ export function KLineChart() {
 
   const {
     stockHistory, stockName, currentPrice, todayOpen,
-    intradayTicks, currentTick, phase, chartView,
+    intradayTicks, currentTick, chartView, calendar,
   } = useGameStore();
   const maVisible = useGameStore(s => s.maVisible);
   const recentIntradayHistory = useGameStore(s => s.recentIntradayHistory);
   const tradeMarkers = useGameStore(s => s.tradeMarkers);
   const { setChartView, toggleMA } = useGameStore(s => s.actions);
 
-  const isTrading = phase === 'am_trading' || phase === 'pm_trading';
-  const canSwitchView = !isTrading;
+  const isTrading = calendar.marketPhase === 'am_trading' || calendar.marketPhase === 'pm_trading';
+  const canSwitchView = true; // 任何时候都可以切换图表视图
 
   // 计算K线聚合数据
   const chartData = useMemo(() => {
@@ -449,10 +449,10 @@ export function KLineChart() {
       {/* 图表 */}
       <div ref={chartRef} />
 
-      {/* 盘中锁定提示 */}
+      {/* 交易状态提示 */}
       {isTrading && (
         <p className="text-xs text-gray-600 mt-1">
-          盘中仅显示分时图，收盘后可切换日K/周K/月K
+          📈 交易进行中
         </p>
       )}
     </div>
