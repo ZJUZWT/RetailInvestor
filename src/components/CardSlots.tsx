@@ -17,7 +17,7 @@ export function CardSlots() {
   }, [pendingCard]);
 
   return (
-    <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4">
+    <div className="p-4">
       <h3 className="text-white font-bold mb-3 text-sm">🃏 卡牌 ({cards.length}/{maxCardSlots})</h3>
 
       <div className="grid gap-2">

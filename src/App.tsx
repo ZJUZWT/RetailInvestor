@@ -19,9 +19,20 @@ import { JobPanel } from './components/JobPanel';
 import { OrderPanel } from './components/OrderPanel';
 import { FlashEventModal } from './components/FlashEventModal';
 
+/** 右侧标签页菜单 */
+const RIGHT_TABS = [
+  { id: 'job', emoji: '💼', label: '工作' },
+  { id: 'player', emoji: '🎮', label: '角色' },
+  { id: 'activity', emoji: '🎯', label: '活动' },
+  { id: 'cards', emoji: '🃏', label: '卡牌' },
+] as const;
+
+type RightTabId = typeof RIGHT_TABS[number]['id'];
+
 function GameScreen() {
   const { gameStatus, job, cards } = useGameStore();
   const { toggleSlacking } = useGameStore(s => s.actions);
+  const [activeTab, setActiveTab] = useState<RightTabId>('job');
 
   if (gameStatus !== 'playing') return null;
 
@@ -32,48 +43,75 @@ function GameScreen() {
   return (
     <div className="min-h-screen bg-[#0a0a0f]">
       <StatusBar />
-      <div className="max-w-6xl mx-auto p-4">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* 左侧：K线图 + 交易面板 + 盈亏面板 */}
-          <div className="lg:col-span-2 space-y-4 relative">
+      <div className="max-w-[1400px] mx-auto p-3">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+
+          {/* ====== 左区：K线 + 交易 ====== */}
+          <div className="lg:col-span-5 space-y-3 relative">
+            {/* 工作遮罩：精简为横幅条 */}
             {isWorkBlocked && (
-              <div className="absolute inset-0 z-20 bg-[#0a0a0f]/95 backdrop-blur-sm rounded-lg flex flex-col items-center justify-center gap-4 border border-gray-800">
-                <div className="text-center">
-                  <span className="text-6xl block mb-4">🏢</span>
-                  <p className="text-white font-bold text-xl mb-2">认真工作中...</p>
-                  <p className="text-gray-400 text-sm mb-1">上班时间不能看盘！</p>
-                  <p className="text-gray-500 text-xs mb-4">想看盘和交易？先开启摸鱼模式！</p>
-                  <div className="flex flex-col gap-2 items-center">
-                    <button
-                      onClick={toggleSlacking}
-                      className="px-6 py-2.5 bg-red-600/80 hover:bg-red-600 text-white rounded-lg font-bold text-sm transition-colors"
-                    >
-                      🐟 开始摸鱼（有风险！）
-                    </button>
-                    <p className="text-gray-600 text-xs">
-                      ⚠️ 摸鱼会降低工作进度，影响今日工资
-                    </p>
+              <div className="bg-[#0a0a0f]/95 backdrop-blur-sm rounded-lg border border-gray-800 p-3 flex items-center justify-between gap-3 z-20 relative">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-2xl">🏢</span>
+                  <div className="min-w-0">
+                    <p className="text-white font-bold text-sm">认真工作中</p>
+                    <p className="text-gray-500 text-xs truncate">上班时间不能看盘</p>
                   </div>
                 </div>
+                <button
+                  onClick={toggleSlacking}
+                  className="px-4 py-2 bg-red-600/80 hover:bg-red-600 text-white rounded-lg font-bold text-xs transition-colors shrink-0"
+                >
+                  🐟 摸鱼
+                </button>
               </div>
             )}
-            <KLineChart />
+            {/* K线图在工作时模糊化 */}
+            <div className={isWorkBlocked ? 'blur-sm pointer-events-none select-none' : ''}>
+              <KLineChart />
+            </div>
             <TradingPanel />
             <OrderPanel />
             <PnLPanel />
           </div>
 
-          {/* 右侧：日历 + 工作 + 角色操作 + 活动 + 事件 + 卡牌 + 消息 */}
-          <div className="space-y-4">
-            <Calendar />
-            <JobPanel />
-            <PlayerActions />
-            <ActivityPanel />
-            <EventDisplay />
-            <CardSlots />
+          {/* ====== 中区：消息 + 日历 + 事件 ====== */}
+          <div className="lg:col-span-4 space-y-3">
             <MessageLog />
+            <Calendar />
+            <EventDisplay />
             <EventLog />
           </div>
+
+          {/* ====== 右区：标签页菜单 ====== */}
+          <div className="lg:col-span-3">
+            {/* 标签栏 */}
+            <div className="flex bg-[#0e0e18] rounded-t-lg border border-gray-800 border-b-0 overflow-hidden">
+              {RIGHT_TABS.map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex-1 py-2 text-xs font-bold transition-colors ${
+                    activeTab === tab.id
+                      ? 'bg-[#1a1a2e] text-white border-b-2 border-blue-500'
+                      : 'text-gray-500 hover:text-gray-300 hover:bg-[#12121f]'
+                  }`}
+                >
+                  <span className="block text-base leading-none mb-0.5">{tab.emoji}</span>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* 标签内容 */}
+            <div className="bg-[#0e0e18] rounded-b-lg border border-gray-800 border-t-0 min-h-[200px]">
+              {activeTab === 'job' && <JobPanel />}
+              {activeTab === 'player' && <PlayerActions />}
+              {activeTab === 'activity' && <ActivityPanel />}
+              {activeTab === 'cards' && <CardSlots />}
+            </div>
+          </div>
+
         </div>
       </div>
     </div>

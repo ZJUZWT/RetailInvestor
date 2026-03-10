@@ -14,9 +14,9 @@ export function ActivityPanel() {
   const energy = Math.round(vitality.energy);
 
   return (
-    <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4">
-      <h3 className="text-white font-bold mb-3">
-        🎯 活动 <span className="text-cyan-400 text-sm font-normal">⚡ 精力 {energy}/{vitality.maxEnergy}</span>
+    <div className="p-4">
+      <h3 className="text-white font-bold mb-3 text-sm">
+        🎯 活动 <span className="text-cyan-400 text-xs font-normal">⚡{energy}/{vitality.maxEnergy}</span>
       </h3>
 
       {isSleeping && (

@@ -14,10 +14,7 @@ export function JobPanel() {
   // 没有工作
   if (!job.employed) {
     return (
-      <div className="bg-[#0e0e18] rounded-lg border border-gray-800 p-4">
-        <h3 className="text-white font-bold mb-2">
-          💼 工作状态
-        </h3>
+      <div className="p-4">
         <div className="bg-[#1a1a2e] rounded p-3 text-center">
           <span className="text-2xl">🆓</span>
           <p className="text-gray-400 text-sm mt-2">自由职业中（无业）</p>

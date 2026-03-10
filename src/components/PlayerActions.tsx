@@ -13,8 +13,8 @@ export function PlayerActions() {
   // 正在睡觉时显示睡眠界面
   if (vitality.isSleeping) {
     return (
-      <div className="bg-[#0e0e18] rounded-lg border border-indigo-800/50 p-4 animate-fadeIn">
-        <h3 className="text-white font-bold mb-3">💤 正在睡觉...</h3>
+      <div className="p-4 animate-fadeIn">
+        <h3 className="text-white font-bold mb-3 text-sm">💤 正在睡觉...</h3>
         <div className="bg-[#1a1a2e] rounded p-3 mb-3">
           <div className="flex justify-between text-sm text-gray-400 mb-2">
             <span>⚡ 精力</span>
